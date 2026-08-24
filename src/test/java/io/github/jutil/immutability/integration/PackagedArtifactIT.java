@@ -71,6 +71,16 @@ class PackagedArtifactIT {
                         + "}\n");
         assertTrue(passing.successful, passing.diagnostics);
 
+        Compilation staticPassing = compileWithDiscoveredProcessor(
+                jarPath,
+                "fixture.StaticPassing",
+                "package fixture;\n"
+                        + "import io.github.jutil.immutability.Immutable;\n"
+                        + "@Immutable final class StaticPassing {\n"
+                        + "  private static int version; static { version = 1; }\n"
+                        + "}\n");
+        assertTrue(staticPassing.successful, staticPassing.diagnostics);
+
         Compilation failing = compileWithDiscoveredProcessor(
                 jarPath,
                 "fixture.Failing",
@@ -82,6 +92,22 @@ class PackagedArtifactIT {
         assertFalse(failing.successful, "Expected packaged processor to reject fixture");
         assertTrue(failing.diagnostics.contains("[IC006]"), failing.diagnostics);
         assertTrue(failing.diagnostics.contains("Failing.value"), failing.diagnostics);
+
+        Compilation staticFailing = compileWithDiscoveredProcessor(
+                jarPath,
+                "fixture.StaticFailing",
+                "package fixture;\n"
+                        + "import io.github.jutil.immutability.Immutable;\n"
+                        + "@Immutable final class StaticFailing {\n"
+                        + "  private static int count; static void increment() { count++; }\n"
+                        + "}\n");
+        assertFalse(staticFailing.successful,
+                "Expected packaged processor to reject static-state fixture");
+        assertTrue(staticFailing.diagnostics.contains("[IC006]"), staticFailing.diagnostics);
+        assertTrue(staticFailing.diagnostics.contains("StaticFailing.<static>.count"),
+                staticFailing.diagnostics);
+        assertTrue(staticFailing.diagnostics.contains("after class initialization"),
+                staticFailing.diagnostics);
 
         Compilation local = compileWithDiscoveredProcessor(
                 jarPath,

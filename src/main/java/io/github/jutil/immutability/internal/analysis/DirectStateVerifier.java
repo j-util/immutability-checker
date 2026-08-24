@@ -12,7 +12,7 @@ import javax.tools.Diagnostic;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Coordinates recursive retained-state verification for annotated ordinary classes. */
+/** Coordinates recursive instance and declared static-state verification. */
 public final class DirectStateVerifier {
 
     private final Trees trees;

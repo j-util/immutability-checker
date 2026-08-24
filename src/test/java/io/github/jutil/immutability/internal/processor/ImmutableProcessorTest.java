@@ -255,9 +255,12 @@ class ImmutableProcessorTest {
     }
 
     @Test
-    void ignoresMutationOfStaticState() {
+    void ignoresMutationOfUnrelatedStaticState() {
         assertPasses("example.Value", HEADER
-                + "@Immutable final class Value { static int count; static void increment() { count++; } }\n");
+                + "final class GlobalState { static int count; }\n"
+                + "@Immutable final class Value {\n"
+                + "  static void incrementGlobal() { GlobalState.count++; }\n"
+                + "}\n");
     }
 
     @Test
@@ -303,7 +306,7 @@ class ImmutableProcessorTest {
                 + "class Parent { private int value; void mutate() { value++; } }\n"
                 + "@Immutable final class Child extends Parent {}\n",
                 "[IC006]", "Child.<superclass> -> Parent.value", "Parent.mutate()",
-                "outside construction");
+                "outside instance construction");
     }
 
     @Test
@@ -438,7 +441,7 @@ class ImmutableProcessorTest {
         assertFails("example.Value", HEADER
                 + "@Immutable final class Value { private int value; Value() {\n"
                 + "  Runnable deferred = () -> Value.this.value++; } }\n",
-                "[IC006]", "Value.value", "lambda in Value()", "outside construction");
+                "[IC006]", "Value.value", "lambda in Value()", "outside instance construction");
     }
 
     @Test
@@ -455,7 +458,7 @@ class ImmutableProcessorTest {
                 + "@Immutable final class Person { private final Address address = null; }\n"
                 + "final class Address { private String city; void move(String city) { this.city = city; } }\n",
                 "[IC006]", "Person.address -> Address.city", "Address.move()",
-                "outside construction");
+                "outside instance construction");
     }
 
     @Test
@@ -475,7 +478,7 @@ class ImmutableProcessorTest {
                 + "final class Address { private final Country country = null; }\n"
                 + "final class Country { private String code; void rename(String code) { this.code = code; } }\n",
                 "[IC006]", "Person.address -> Address.country -> Country.code",
-                "Country.rename()", "outside construction");
+                "Country.rename()", "outside instance construction");
     }
 
     @Test

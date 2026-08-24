@@ -28,8 +28,15 @@ import java.util.List;
 final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
 
     private enum Phase {
-        ROOT_CONSTRUCTION,
+        INSTANCE_CONSTRUCTION,
+        CLASS_INITIALIZATION,
         OTHER
+    }
+
+    private enum HelperCandidate {
+        NONE,
+        PRIVATE_INSTANCE_METHOD,
+        PRIVATE_STATIC_METHOD
     }
 
     private final TypeElement rootType;
@@ -40,7 +47,7 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
 
     private Phase phase = Phase.OTHER;
     private String executableContext = "type body";
-    private boolean constructorHelperCandidate;
+    private HelperCandidate helperCandidate = HelperCandidate.NONE;
 
     DirectFieldWriteScanner(
             TypeElement rootType,
@@ -71,7 +78,7 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
         if (rootType.equals(element)) {
             return super.visitClass(node, unused);
         }
-        return withContext(Phase.OTHER, describeNestedType(element), false, new ScanAction() {
+        return withContext(Phase.OTHER, describeNestedType(element), HelperCandidate.NONE, new ScanAction() {
             @Override
             public Void scan() {
                 return DirectFieldWriteScanner.super.visitClass(node, unused);
@@ -82,13 +89,20 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
     @Override
     public Void visitVariable(VariableTree node, Void unused) {
         Element element = trees.getElement(getCurrentPath());
-        if (isRootInstanceField(element)) {
+        if (isRootField(element)) {
             if (node.getInitializer() == null) {
                 return null;
             }
-            final String fieldContext = "field initializer " + rootType.getSimpleName()
-                    + "." + element.getSimpleName();
-            return withContext(Phase.ROOT_CONSTRUCTION, fieldContext, false, new ScanAction() {
+            final boolean staticField = element.getModifiers().contains(Modifier.STATIC);
+            final String fieldContext = (staticField
+                    ? "static field initializer "
+                    : "field initializer ")
+                    + rootType.getSimpleName() + "." + element.getSimpleName();
+            return withContext(
+                    staticField ? Phase.CLASS_INITIALIZATION : Phase.INSTANCE_CONSTRUCTION,
+                    fieldContext,
+                    HelperCandidate.NONE,
+                    new ScanAction() {
                 @Override
                 public Void scan() {
                     return DirectFieldWriteScanner.this.scan(node.getInitializer(), unused);
@@ -103,11 +117,13 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
         TreePath parent = getCurrentPath().getParentPath();
         if (parent != null && parent.getLeaf() instanceof ClassTree
                 && rootType.equals(trees.getElement(parent))) {
-            Phase blockPhase = node.isStatic() ? Phase.OTHER : Phase.ROOT_CONSTRUCTION;
+            Phase blockPhase = node.isStatic()
+                    ? Phase.CLASS_INITIALIZATION
+                    : Phase.INSTANCE_CONSTRUCTION;
             String description = node.isStatic()
                     ? "static initializer of " + rootType.getSimpleName()
                     : "instance initializer of " + rootType.getSimpleName();
-            return withContext(blockPhase, description, false, new ScanAction() {
+            return withContext(blockPhase, description, HelperCandidate.NONE, new ScanAction() {
                 @Override
                 public Void scan() {
                     return DirectFieldWriteScanner.super.visitBlock(node, unused);
@@ -123,14 +139,22 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
         final boolean rootConstructor = element instanceof ExecutableElement
                 && element.getKind() == ElementKind.CONSTRUCTOR
                 && rootType.equals(element.getEnclosingElement());
-        final boolean helperCandidate = element instanceof ExecutableElement
+        final boolean privateMethod = element instanceof ExecutableElement
                 && element.getKind() == ElementKind.METHOD
                 && rootType.equals(element.getEnclosingElement())
                 && element.getModifiers().contains(Modifier.PRIVATE);
+        final HelperCandidate methodHelperCandidate;
+        if (!privateMethod) {
+            methodHelperCandidate = HelperCandidate.NONE;
+        } else if (element.getModifiers().contains(Modifier.STATIC)) {
+            methodHelperCandidate = HelperCandidate.PRIVATE_STATIC_METHOD;
+        } else {
+            methodHelperCandidate = HelperCandidate.PRIVATE_INSTANCE_METHOD;
+        }
         return withContext(
-                rootConstructor ? Phase.ROOT_CONSTRUCTION : Phase.OTHER,
+                rootConstructor ? Phase.INSTANCE_CONSTRUCTION : Phase.OTHER,
                 describeExecutable(element),
-                helperCandidate,
+                methodHelperCandidate,
                 new ScanAction() {
                     @Override
                     public Void scan() {
@@ -142,7 +166,7 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
     @Override
     public Void visitLambdaExpression(LambdaExpressionTree node, Void unused) {
         final String lambdaContext = "lambda in " + executableContext;
-        return withContext(Phase.OTHER, lambdaContext, false, new ScanAction() {
+        return withContext(Phase.OTHER, lambdaContext, HelperCandidate.NONE, new ScanAction() {
             @Override
             public Void scan() {
                 return DirectFieldWriteScanner.super.visitLambdaExpression(node, unused);
@@ -180,30 +204,38 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
     private void recordWrite(ExpressionTree target, Tree writeTree) {
         Element targetElement = trees.getElement(new TreePath(getCurrentPath(), target));
         if (!(targetElement instanceof VariableElement)
-                || !isRootInstanceField(targetElement)) {
+                || !isRootField(targetElement)) {
             return;
         }
 
-        boolean writesObjectBeingConstructed = phase == Phase.ROOT_CONSTRUCTION
-                && isCurrentInstanceTarget(target);
-        if (writesObjectBeingConstructed) {
+        boolean staticField = targetElement.getModifiers().contains(Modifier.STATIC);
+        boolean allowedWrite = staticField
+                ? phase == Phase.CLASS_INITIALIZATION
+                : phase == Phase.INSTANCE_CONSTRUCTION && isCurrentInstanceTarget(target);
+        if (allowedWrite) {
             return;
         }
 
         String reason;
-        if (phase == Phase.ROOT_CONSTRUCTION) {
+        if (staticField) {
+            reason = "write in " + executableContext + " occurs after class initialization";
+            if (helperCandidate == HelperCandidate.PRIVATE_STATIC_METHOD) {
+                reason += "; static-initialization-only helper reachability is not analyzed "
+                        + "in the current proof model";
+            }
+        } else if (phase == Phase.INSTANCE_CONSTRUCTION) {
             reason = "write in " + executableContext
                     + " uses a receiver not proven to be the object under construction; "
                     + "constructor receiver-alias analysis is not implemented";
         } else {
-            reason = "write in " + executableContext + " occurs outside construction";
-            if (constructorHelperCandidate) {
+            reason = "write in " + executableContext + " occurs outside instance construction";
+            if (helperCandidate != HelperCandidate.NONE) {
                 reason += "; constructor-only helper reachability is not analyzed in the current proof model";
             }
         }
 
         failures.add(ProofFailure.create(
-                DiagnosticId.POST_CONSTRUCTION_WRITE,
+                DiagnosticId.POST_FREEZE_WRITE,
                 rootName,
                 fieldPath(targetElement),
                 reason,
@@ -213,18 +245,19 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
     }
 
     private String fieldPath(Element field) {
-        String localPath = rootType.getSimpleName() + "." + field.getSimpleName();
+        String localPath = rootType.getSimpleName()
+                + (field.getModifiers().contains(Modifier.STATIC) ? ".<static>." : ".")
+                + field.getSimpleName();
         if (incomingPath.isEmpty()) {
             return localPath;
         }
         return incomingPath + " -> " + localPath;
     }
 
-    private boolean isRootInstanceField(Element element) {
+    private boolean isRootField(Element element) {
         return element instanceof VariableElement
                 && element.getKind() == ElementKind.FIELD
-                && rootType.equals(element.getEnclosingElement())
-                && !element.getModifiers().contains(Modifier.STATIC);
+                && rootType.equals(element.getEnclosingElement());
     }
 
     private boolean isCurrentInstanceTarget(ExpressionTree target) {
@@ -285,20 +318,20 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
     private Void withContext(
             Phase nextPhase,
             String nextDescription,
-            boolean nextHelperCandidate,
+            HelperCandidate nextHelperCandidate,
             ScanAction action) {
         Phase previousPhase = phase;
         String previousDescription = executableContext;
-        boolean previousHelperCandidate = constructorHelperCandidate;
+        HelperCandidate previousHelperCandidate = helperCandidate;
         phase = nextPhase;
         executableContext = nextDescription;
-        constructorHelperCandidate = nextHelperCandidate;
+        helperCandidate = nextHelperCandidate;
         try {
             return action.scan();
         } finally {
             phase = previousPhase;
             executableContext = previousDescription;
-            constructorHelperCandidate = previousHelperCandidate;
+            helperCandidate = previousHelperCandidate;
         }
     }
 

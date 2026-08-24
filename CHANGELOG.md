@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Added recursive verification of declared static state for annotated roots,
+  recursively analyzed source classes, and source superclasses.
+- Added the class-initialization freeze boundary, allowing direct static writes
+  only in static field initializers and static initializer blocks.
+- Added static-field diagnostic paths and regression coverage for external
+  writability, post-initialization writes, recursion, cycles, and inheritance.
+- Documented the conservative limitation that static-initialization-only helper
+  reachability is not yet analyzed.
 - Added cycle-safe recursive retained-state verification for source-available
   ordinary classes, their source superclasses, and further source field types.
 - Added deterministic complete reference paths and fail-closed diagnostics for

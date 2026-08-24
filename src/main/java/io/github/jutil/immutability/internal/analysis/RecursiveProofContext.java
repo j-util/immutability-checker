@@ -33,6 +33,11 @@ final class RecursiveProofContext {
         FAILED
     }
 
+    private enum StateKind {
+        INSTANCE,
+        STATIC
+    }
+
     private final Trees trees;
     private final Elements elements;
     private final Types types;
@@ -74,7 +79,7 @@ final class RecursiveProofContext {
         }
 
         boolean proven = verifySuperclass(node, type, typePath, incomingPath);
-        for (Element field : retainedFields(type)) {
+        for (StateField field : stateFields(type)) {
             if (!verifyField(node, type, field, typePath, incomingPath)) {
                 proven = false;
             }
@@ -155,9 +160,10 @@ final class RecursiveProofContext {
     private boolean verifyField(
             ProofNode node,
             TypeElement owner,
-            Element field,
+            StateField stateField,
             TreePath ownerPath,
             String incomingPath) {
+        Element field = stateField.element;
         TreePath fieldPath = trees.getPath(field);
         Tree tree = fieldPath == null ? ownerPath.getLeaf() : fieldPath.getLeaf();
         CompilationUnitTree unit = fieldPath == null
@@ -165,7 +171,9 @@ final class RecursiveProofContext {
                 : fieldPath.getCompilationUnit();
         String retainedPath = appendPath(
                 incomingPath,
-                owner.getSimpleName() + "." + field.getSimpleName());
+                owner.getSimpleName()
+                        + (stateField.kind == StateKind.STATIC ? ".<static>." : ".")
+                        + field.getSimpleName());
         boolean proven = true;
 
         if (!field.getModifiers().contains(Modifier.PRIVATE)
@@ -173,7 +181,9 @@ final class RecursiveProofContext {
             failures.add(failure(
                     DiagnosticId.EXTERNALLY_WRITABLE_FIELD,
                     retainedPath,
-                    "non-private, non-final instance field is directly writable after construction",
+                    stateField.kind == StateKind.STATIC
+                            ? "non-private, non-final static field is directly writable after class initialization"
+                            : "non-private, non-final instance field is directly writable after construction",
                     tree,
                     unit));
             proven = false;
@@ -299,22 +309,26 @@ final class RecursiveProofContext {
         return ProofFailure.create(id, rootName, path, reason, tree, unit, trees);
     }
 
-    private List<Element> retainedFields(TypeElement type) {
-        List<Element> fields = new ArrayList<Element>();
+    private List<StateField> stateFields(TypeElement type) {
+        List<StateField> fields = new ArrayList<StateField>();
         for (Element element : type.getEnclosedElements()) {
-            if (element.getKind() == ElementKind.FIELD
-                    && !element.getModifiers().contains(Modifier.STATIC)) {
-                fields.add(element);
+            if (element.getKind() == ElementKind.FIELD) {
+                StateKind kind = element.getModifiers().contains(Modifier.STATIC)
+                        ? StateKind.STATIC
+                        : StateKind.INSTANCE;
+                fields.add(new StateField(element, kind));
             }
         }
-        Collections.sort(fields, new Comparator<Element>() {
+        Collections.sort(fields, new Comparator<StateField>() {
             @Override
-            public int compare(Element left, Element right) {
-                int positionComparison = Long.compare(sourcePosition(left), sourcePosition(right));
+            public int compare(StateField left, StateField right) {
+                int positionComparison = Long.compare(
+                        sourcePosition(left.element), sourcePosition(right.element));
                 if (positionComparison != 0) {
                     return positionComparison;
                 }
-                return left.getSimpleName().toString().compareTo(right.getSimpleName().toString());
+                return left.element.getSimpleName().toString()
+                        .compareTo(right.element.getSimpleName().toString());
             }
         });
         return fields;
@@ -340,5 +354,15 @@ final class RecursiveProofContext {
     private static final class ProofNode {
         private ProofState state = ProofState.UNSEEN;
         private final Set<ProofNode> dependencies = new LinkedHashSet<ProofNode>();
+    }
+
+    private static final class StateField {
+        private final Element element;
+        private final StateKind kind;
+
+        private StateField(Element element, StateKind kind) {
+            this.element = element;
+            this.kind = kind;
+        }
     }
 }
