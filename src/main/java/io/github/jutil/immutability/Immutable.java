@@ -25,10 +25,39 @@ import java.lang.annotation.Target;
  * superclasses that participate recursively in the proof graph. It does not
  * analyze unrelated global state merely because a method mentions it.</p>
  *
+ * <p>The current V1 collection model supports fields declared as
+ * {@link java.util.Collection}, {@link java.util.List}, {@link java.util.Set},
+ * or {@link java.util.Map} when the retained container comes directly from a
+ * fresh {@link java.util.ArrayList}, {@link java.util.HashSet},
+ * {@link java.util.LinkedHashSet}, {@link java.util.HashMap}, or
+ * {@link java.util.LinkedHashMap} allocation in the applicable initialization
+ * phase. Copy constructors establish fresh container ownership but do not copy
+ * their items. Collection elements, and map keys and values, are recursively
+ * verified as part of the retained state graph.</p>
+ *
+ * <p>Supported structural mutation is allowed only after fresh ownership has
+ * been established and before the owning instance or class-state boundary
+ * freezes. The collection-specific analysis rejects direct container aliases,
+ * simple local-alias mutation after freeze, container returns, passing the
+ * container to unmodeled code, mutation-capable non-private fields, and
+ * iterator or view exposure. It models only an explicit set of collection read
+ * and mutation signatures; unknown operations fail closed.</p>
+ *
+ * <p>Collections nested directly inside collections, raw or wildcard
+ * collection arguments, unresolved collection type variables, custom or other
+ * collection implementations, unmodifiable wrappers, callback-based
+ * collection mutation, streams, spliterators, iterators, and collection views
+ * are not proven by this milestone. Arrays, records, cross-module proof
+ * metadata, and general interprocedural escape analysis also remain
+ * unsupported.</p>
+ *
  * <p>A successful verification does not establish safe publication under the
  * Java Memory Model and does not imply general method purity or thread safety.
- * It also does not protect against reflection, {@code Unsafe}, native code, or
- * other mechanisms outside the supported ordinary-Java analysis model.</p>
+ * It also does not protect against reflection, {@code Unsafe},
+ * {@code VarHandle}, field-writing {@code MethodHandle} operations, atomic
+ * field updaters, JNI or other native code, instrumentation, hostile agents,
+ * or other runtime-bypass mechanisms outside the supported ordinary-Java
+ * analysis model.</p>
  *
  * @since 1.0
  */

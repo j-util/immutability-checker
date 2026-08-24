@@ -44,6 +44,7 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
     private final String incomingPath;
     private final Trees trees;
     private final List<ProofFailure> failures;
+    private final DiagnosticId postFreezeDiagnostic;
 
     private Phase phase = Phase.OTHER;
     private String executableContext = "type body";
@@ -54,12 +55,14 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
             String rootName,
             String incomingPath,
             Trees trees,
-            List<ProofFailure> failures) {
+            List<ProofFailure> failures,
+            DiagnosticId postFreezeDiagnostic) {
         this.rootType = rootType;
         this.rootName = rootName;
         this.incomingPath = incomingPath;
         this.trees = trees;
         this.failures = failures;
+        this.postFreezeDiagnostic = postFreezeDiagnostic;
     }
 
     void scanEnclosingType(TreePath rootPath) {
@@ -235,7 +238,7 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
         }
 
         failures.add(ProofFailure.create(
-                DiagnosticId.POST_FREEZE_WRITE,
+                postFreezeDiagnostic,
                 rootName,
                 fieldPath(targetElement),
                 reason,

@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.Locale;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
@@ -52,6 +53,7 @@ class PackagedArtifactIT {
             assertNotNull(jar.getJarEntry("META-INF/LICENSE"));
             assertEquals(52, classMajorVersion(jar, ANNOTATION_CLASS));
             assertEquals(52, classMajorVersion(jar, PROCESSOR_CLASS));
+            assertAllPackagedClassesTargetJava8(jar);
             assertEquals(PROCESSOR_PROVIDER, readEntry(jar, SERVICE_FILE).trim());
             Attributes attributes = jar.getManifest().getMainAttributes();
             assertEquals("io.github.jutil.immutability",
@@ -81,6 +83,20 @@ class PackagedArtifactIT {
                         + "}\n");
         assertTrue(staticPassing.successful, staticPassing.diagnostics);
 
+        Compilation collectionPassing = compileWithDiscoveredProcessor(
+                jarPath,
+                "fixture.CollectionPassing",
+                "package fixture;\n"
+                        + "import io.github.jutil.immutability.Immutable;\n"
+                        + "import java.util.ArrayList;\n"
+                        + "import java.util.List;\n"
+                        + "@Immutable final class CollectionPassing {\n"
+                        + "  private List<String> values = new ArrayList<>();\n"
+                        + "  CollectionPassing(String value) { values.add(value); }\n"
+                        + "  String get(int index) { return values.get(index); }\n"
+                        + "}\n");
+        assertTrue(collectionPassing.successful, collectionPassing.diagnostics);
+
         Compilation failing = compileWithDiscoveredProcessor(
                 jarPath,
                 "fixture.Failing",
@@ -109,6 +125,26 @@ class PackagedArtifactIT {
         assertTrue(staticFailing.diagnostics.contains("after class initialization"),
                 staticFailing.diagnostics);
 
+        Compilation collectionFailing = compileWithDiscoveredProcessor(
+                jarPath,
+                "fixture.CollectionFailing",
+                "package fixture;\n"
+                        + "import io.github.jutil.immutability.Immutable;\n"
+                        + "import java.util.ArrayList;\n"
+                        + "import java.util.List;\n"
+                        + "@Immutable final class CollectionFailing {\n"
+                        + "  private List<String> values = new ArrayList<>();\n"
+                        + "  void add(String value) { values.add(value); }\n"
+                        + "}\n");
+        assertFalse(collectionFailing.successful,
+                "Expected packaged processor to reject collection mutation fixture");
+        assertTrue(collectionFailing.diagnostics.contains("[IC006]"),
+                collectionFailing.diagnostics);
+        assertTrue(collectionFailing.diagnostics.contains("CollectionFailing.values"),
+                collectionFailing.diagnostics);
+        assertTrue(collectionFailing.diagnostics.contains("after instance construction"),
+                collectionFailing.diagnostics);
+
         Compilation local = compileWithDiscoveredProcessor(
                 jarPath,
                 "fixture.LocalUse",
@@ -126,6 +162,16 @@ class PackagedArtifactIT {
             assertEquals(0xCAFEBABE, input.readInt());
             input.readUnsignedShort();
             return input.readUnsignedShort();
+        }
+    }
+
+    private static void assertAllPackagedClassesTargetJava8(JarFile jar) throws IOException {
+        Enumeration<JarEntry> entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            if (!entry.isDirectory() && entry.getName().endsWith(".class")) {
+                assertEquals(52, classMajorVersion(jar, entry.getName()), entry.getName());
+            }
         }
     }
 

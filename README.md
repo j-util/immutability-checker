@@ -117,7 +117,12 @@ The current proof capability supports:
 - recursively analyzed source superclasses, which do not need to be `final`;
 - primitive instance and static fields; and
 - exactly these modeled immutable JDK leaves: `Boolean`, `Byte`, `Short`,
-  `Integer`, `Long`, `Character`, `Float`, `Double`, `String`, and `UUID`.
+  `Integer`, `Long`, `Character`, `Float`, `Double`, `String`, and `UUID`;
+- fields declared as `Collection<E>`, `List<E>`, `Set<E>`, or `Map<K,V>` when
+  an exact supported fresh allocation establishes container ownership; and
+- recursive verification of collection elements and map keys and values,
+  including source-available final ordinary classes that do not carry their
+  own `@Immutable` annotation.
 
 Records are intentionally deferred to V2. An annotated record is rejected with
 `IC001`, even when all of its components use known leaves.
@@ -152,35 +157,109 @@ Polymorphic retained references fail closed in this development slice. A
 declared interface, or a non-final declared source class whose exact allocation
 is not established, produces `IC005` for unresolved runtime subtype analysis.
 This is a limitation of the current analysis, not a rule that immutable classes
-must be final. Exact-allocation and ownership analysis are planned for a later
-milestone.
+must be final. The collection model is a narrow exception: the supported
+collection interfaces are accepted only when the retained implementation is
+established by one of the exact fresh allocations described below.
 
 Constructor-only and static-initialization-only helper reachability are not
 analyzed yet. A direct field write inside a helper method therefore fails
 conservatively even if current source appears to call that helper only from a
 constructor or static initializer.
 
+### Owned collections
+
+The collection milestone supports these declared field types:
+
+```text
+java.util.Collection<E>
+java.util.List<E>
+java.util.Set<E>
+java.util.Map<K, V>
+```
+
+The retained container must come directly from exactly one fresh allocation of
+`ArrayList`, `HashSet`, `LinkedHashSet`, `HashMap`, or `LinkedHashMap`. The
+allocation may occur in an instance field initializer, instance initializer,
+or constructor for instance state, or in a static field initializer or static
+initializer for class state. A supported copy constructor creates a fresh
+container, so this establishes ownership:
+
+```java
+import io.github.jutil.immutability.Immutable;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Immutable
+public final class Names {
+    private List<String> values;
+
+    public Names(List<String> source) {
+        values = new ArrayList<>(source);
+    }
+
+    public String get(int index) {
+        return values.get(index);
+    }
+}
+```
+
+The copy is shallow. Every collection element, and every map key and value, is
+therefore proved recursively. For example, a `List<Line>` succeeds only when
+`Line` is an exact known leaf or final source-available ordinary class whose
+complete participating state graph passes. An `@Immutable` annotation on
+`Line` is neither needed nor treated as proof. Collection paths use `element`,
+`key`, and `value`, such as `Order.lines -> element -> Line.price`.
+
+Supported non-callback structural mutators include the ordinary `add`,
+`addAll`, `remove`, `removeAll`, `retainAll`, `clear`, indexed list mutation,
+and map `put`, removal, and replacement signatures. They are allowed only when
+the container is already owned and execution is still within its applicable
+instance-construction or class-initialization phase. The same calls produce
+`IC006` after freeze, including calls through a simple local alias. Callback
+mutators such as `removeIf`, `replaceAll`, `compute*`, and `merge` fail closed
+with `IC005` because callback effects and escapes are not modeled yet.
+
+The explicit read model includes `size`, `isEmpty`, containment checks, indexed
+list lookup, and direct map lookup. Returning an element from `List.get` or a
+value from `Map.get` is safe after its generic role has passed recursive proof.
+Unknown collection operations fail closed; read-only behavior is never inferred
+from a method name.
+
+The retained mutable container must not escape. Direct returns, passing it to
+unmodeled code or a callback, storing it in another field or array, and exposing
+it through a non-private final collection field produce `IC005`. Iterator,
+list-iterator, sublist, map-view, stream, parallel-stream, and spliterator
+creation also fails closed because those objects may alias retained state. This
+is collection-specific alias and escape analysis, not a claim of general
+interprocedural escape analysis.
+
 ### Fail-closed limitations
 
-The current implementation does not yet model ownership, collections, arrays,
-defensive copies, aliases, escapes, method-call effects, constructor-helper or
-static-initializer-helper call graphs, exact allocations, bytecode, or
-cross-module proof metadata. A referenced compiled or external type without an
-explicit semantic model fails with `IC005`; an unavailable non-`Object`
-superclass fails with `IC003`.
+The current implementation does not yet model arrays, arbitrary defensive
+copies, general aliases or escapes, general method-call effects,
+constructor-helper or static-initializer-helper call graphs, exact allocations
+for arbitrary non-collection classes, bytecode, or cross-module proof metadata.
+A referenced compiled or external type without an explicit semantic model
+fails with `IC005`; an unavailable non-`Object` superclass fails with `IC003`.
 
-Fields containing arrays, `List`, or other collections therefore remain
-unproven. They are not categorically mutable or permanently forbidden by the
-project contract. A `final` field modifier and an `@Immutable` annotation on a
-referenced type are not proof. Unknown always fails closed.
+Collection support is intentionally bounded. Queues, deques, sorted,
+concurrent, weak, identity, custom, and third-party collection implementations
+are unsupported. So are raw collections, wildcard or unresolved type-variable
+arguments, collections nested directly inside collections, factory and helper
+origins, conditional or competing origins, field-to-field ownership,
+unmodifiable wrappers, builders, deserialization, and arbitrary
+interprocedural alias analysis. A `final` field modifier, an unmodifiable-looking
+wrapper, and an `@Immutable` annotation on an item type are not proof. Unknown
+always fails closed.
 
 Static fields are included only when declared by the annotated root or another
 source class already participating in its recursive proof graph. The checker
 does not expand into unrelated application-wide global state merely because a
 verified method mentions or mutates it.
 
-The direct-write scanner does not detect or model indirect field mutation
-performed through `VarHandle`, `AtomicIntegerFieldUpdater`,
+The checker does not detect or model indirect field mutation performed through
+`VarHandle`, `AtomicIntegerFieldUpdater`,
 `AtomicLongFieldUpdater`, `AtomicReferenceFieldUpdater`, `MethodHandle` field
 setters, reflection, `Unsafe`, JNI/native code, or bytecode instrumentation.
 Those mechanisms are outside the current supported static-analysis model.
@@ -194,8 +273,8 @@ Diagnostics use stable identifiers:
 | `IC002` | Implicit or captured enclosing state unproven |
 | `IC003` | Inherited state or behavior unproven |
 | `IC004` | Externally writable instance or static field |
-| `IC005` | Reachable reference, source, or runtime subtype unproven |
-| `IC006` | Field write after the applicable freeze boundary |
+| `IC005` | Reachable reference, collection ownership/item proof, alias, escape, operation, source, or runtime subtype unproven |
+| `IC006` | Field write or structural collection mutation after the applicable freeze boundary |
 
 ## Compiler setup
 

@@ -216,13 +216,13 @@ class StaticStateVerificationTest {
     }
 
     @Test
-    void rejectsStaticCollectionFieldAsUnproven() {
+    void rejectsStaticCollectionWithoutFreshOwnershipOrigin() {
         assertFails("example.Value", HEADER
                 + "@Immutable final class Value {\n"
                 + "  private static final java.util.List<String> VALUES = null;\n"
                 + "}\n",
                 "[IC005]", "Value.<static>.VALUES", "java.util.List<java.lang.String>",
-                "unresolved runtime subtype analysis");
+                "supported fresh collection allocation");
     }
 
     @Test

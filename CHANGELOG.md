@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Added owned `Collection`, `List`, `Set`, and `Map` verification for exact
+  fresh `ArrayList`, `HashSet`, `LinkedHashSet`, `HashMap`, and `LinkedHashMap`
+  allocations, including supported copy constructors.
+- Added recursive collection-element and map-key/value proof with deterministic
+  `element`, `key`, and `value` diagnostic paths.
+- Added supported construction and class-initialization collection mutation,
+  simple local-alias tracking, and post-freeze structural mutation diagnostics.
+- Added collection-specific alias, return, argument, field/array storage,
+  iterator, view, stream, and unknown-operation escape rejection.
+- Documented intentional fail-closed limits for nested collections, unsupported
+  implementations, wrappers, callbacks, generic shapes, and ownership origins.
 - Added recursive verification of declared static state for annotated roots,
   recursively analyzed source classes, and source superclasses.
 - Added the class-initialization freeze boundary, allowing direct static writes

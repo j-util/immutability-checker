@@ -1366,52 +1366,68 @@ It must not reduce the meaning of successful verification.
 
 ---
 
-## 23. Ordinary Mutation Mechanisms
 
-The checker must not silently ignore ordinary Java mechanisms that may mutate verified state.
+## 23. Supported Mutation Mechanisms
 
-Examples include:
+The V1 proof obligation includes mutation and escape mechanisms expressed through supported ordinary Java source constructs.
 
-* ordinary assignments;
+The checker must model or fail closed for supported operations such as:
+
+* ordinary field assignments;
 * compound assignments;
 * increments and decrements;
-* array writes;
-* collection mutators;
-* map mutators;
-* iterator removal;
-* view mutation;
-* atomic field updaters;
-* `VarHandle`;
-* `MethodHandle` field setters;
-* serialization callbacks;
-* deserialization callbacks;
-* reflective APIs used directly by verified source.
+* array writes once array support is implemented;
+* collection and map mutators;
+* iterator and mutable-view operations;
+* aliases to verified state;
+* returning verified state;
+* passing verified state to ordinary method calls;
+* ordinary method effects on verified state;
+* mutations reachable through nested custom objects;
+* mutations reachable through collection elements, map keys, and map values.
 
-If such a mechanism is present and affects verified state:
+For mechanisms inside the supported proof model:
 
-* model it correctly; or
-* fail closed.
+```text
+not recognized
+```
 
-Not recognizing the mechanism must never be treated as proof of safety.
+must never mean:
+
+```text
+safe
+```
+
+The checker must either model the relevant effect or reject the program as unproven.
+
+Support may be introduced incrementally. Current-status documentation must identify which ordinary Java mechanisms are implemented and which remain fail-closed.
 
 ---
 
-## 24. Mechanisms Outside the Guarantee
+## 24. Deferred Low-Level, Reflective, and Runtime-Bypass Mechanisms
 
-The project does not claim protection against deliberate runtime bypass mechanisms outside its supported static-analysis model, such as:
+The initial V1 guarantee does not include mutation performed through low-level, reflective, native, or runtime-instrumentation mechanisms such as:
 
-* hostile reflection bypassing encapsulation;
+* Java reflection;
 * `Unsafe`;
-* JNI/native memory mutation;
-* bytecode instrumentation after verification;
+* `VarHandle`;
+* field-writing `MethodHandle` operations;
+* `AtomicIntegerFieldUpdater`;
+* `AtomicLongFieldUpdater`;
+* `AtomicReferenceFieldUpdater`;
+* JNI or other native code;
+* bytecode instrumentation;
 * debugger memory modification;
 * hostile JVM agents;
-* unsupported deserialization tricks;
-* JVM implementation corruption.
+* unsupported serialization or deserialization bypasses.
 
-Documentation must not claim security against these mechanisms.
+The checker is not required to detect or reject these mechanisms in the initial V1 release.
 
-This limitation does not permit the checker to silently accept explicit use of such mechanisms inside analyzed source. Explicit state-relevant use must be rejected unless safely modeled.
+Their effects are outside the verified guarantee even when such APIs appear explicitly in analyzed source.
+
+Public documentation must state this boundary clearly and must not claim protection against these mechanisms.
+
+Future versions may add explicit models or rejection rules for some deferred mechanisms. Such additions strengthen the proof capability but are not required for the initial V1 contract.
 
 ---
 

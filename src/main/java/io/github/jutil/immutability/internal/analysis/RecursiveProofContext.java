@@ -10,8 +10,11 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.TypeVariable;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import java.util.ArrayList;
@@ -42,6 +45,7 @@ final class RecursiveProofContext {
     private final Elements elements;
     private final Types types;
     private final ReferenceTypeProof referenceTypeProof;
+    private final CollectionTypeModel collectionTypeModel;
     private final String rootName;
     private final List<ProofFailure> failures;
     private final Map<TypeElement, ProofNode> nodes = new LinkedHashMap<TypeElement, ProofNode>();
@@ -57,36 +61,77 @@ final class RecursiveProofContext {
         this.elements = elements;
         this.types = types;
         this.referenceTypeProof = referenceTypeProof;
+        this.collectionTypeModel = new CollectionTypeModel(elements, types);
         this.rootName = rootName;
         this.failures = failures;
     }
 
     void verify(TypeElement rootType, TreePath rootPath) {
-        proveSourceType(rootType, rootPath, "");
+        proveSourceType(rootType, rootPath, "", null);
         propagateFailures();
     }
 
-    private void proveSourceType(TypeElement type, TreePath typePath, String incomingPath) {
+    private void proveSourceType(
+            TypeElement type,
+            TreePath typePath,
+            String incomingPath,
+            DiagnosticId violationDiagnostic) {
         ProofNode node = node(type);
         if (node.state != ProofState.UNSEEN) {
             return;
         }
 
         node.state = ProofState.VISITING;
-        if (!verifyNesting(type, typePath, incomingPath)) {
+        if (!verifyNesting(type, typePath, incomingPath, violationDiagnostic)) {
             node.state = ProofState.FAILED;
             return;
         }
 
-        boolean proven = verifySuperclass(node, type, typePath, incomingPath);
+        boolean proven = verifySuperclass(
+                node, type, typePath, incomingPath, violationDiagnostic);
+        List<CollectionProof> collectionProofs = new ArrayList<CollectionProof>();
         for (StateField field : stateFields(type)) {
-            if (!verifyField(node, type, field, typePath, incomingPath)) {
+            if (!verifyField(
+                    node,
+                    type,
+                    field,
+                    typePath,
+                    incomingPath,
+                    violationDiagnostic,
+                    collectionProofs)) {
                 proven = false;
             }
         }
 
+        int failureCountBeforeCollectionScan = failures.size();
+        if (!collectionProofs.isEmpty()) {
+            new CollectionOriginAnalyzer(
+                    type,
+                    rootName,
+                    trees,
+                    collectionTypeModel,
+                    collectionProofs,
+                    failures).analyze(typePath);
+            new CollectionEffectScanner(
+                    type,
+                    rootName,
+                    trees,
+                    collectionTypeModel,
+                    collectionProofs,
+                    failures).scanEnclosingType(typePath);
+        }
+        if (failures.size() != failureCountBeforeCollectionScan) {
+            proven = false;
+        }
+
         int failureCountBeforeWriteScan = failures.size();
-        new DirectFieldWriteScanner(type, rootName, incomingPath, trees, failures)
+        new DirectFieldWriteScanner(
+                type,
+                rootName,
+                incomingPath,
+                trees,
+                failures,
+                effectiveDiagnostic(DiagnosticId.POST_FREEZE_WRITE, violationDiagnostic))
                 .scanEnclosingType(typePath);
         if (failures.size() != failureCountBeforeWriteScan) {
             proven = false;
@@ -94,13 +139,17 @@ final class RecursiveProofContext {
         node.state = proven ? ProofState.PROVEN : ProofState.FAILED;
     }
 
-    private boolean verifyNesting(TypeElement type, TreePath typePath, String incomingPath) {
+    private boolean verifyNesting(
+            TypeElement type,
+            TreePath typePath,
+            String incomingPath,
+            DiagnosticId violationDiagnostic) {
         NestingKind nesting = type.getNestingKind();
         if ((nesting == NestingKind.MEMBER && !type.getModifiers().contains(Modifier.STATIC))
                 || nesting == NestingKind.LOCAL
                 || nesting == NestingKind.ANONYMOUS) {
             failures.add(failure(
-                    DiagnosticId.ENCLOSING_STATE_UNPROVEN,
+                    effectiveDiagnostic(DiagnosticId.ENCLOSING_STATE_UNPROVEN, violationDiagnostic),
                     appendPath(incomingPath, type.getSimpleName() + ".<enclosing>"),
                     "implicit or captured enclosing-instance state is not analyzed",
                     typePath.getLeaf(),
@@ -114,7 +163,8 @@ final class RecursiveProofContext {
             ProofNode node,
             TypeElement type,
             TreePath typePath,
-            String incomingPath) {
+            String incomingPath,
+            DiagnosticId violationDiagnostic) {
         TypeMirror superclass = type.getSuperclass();
         TypeElement objectType = elements.getTypeElement("java.lang.Object");
         if (objectType != null
@@ -131,7 +181,7 @@ final class RecursiveProofContext {
         Element superclassElement = types.asElement(superclass);
         if (!(superclassElement instanceof TypeElement)) {
             failures.add(failure(
-                    DiagnosticId.INHERITED_STATE_UNPROVEN,
+                    effectiveDiagnostic(DiagnosticId.INHERITED_STATE_UNPROVEN, violationDiagnostic),
                     superclassPath,
                     superclass + " -> inherited state and behavior cannot be established",
                     typePath.getLeaf(),
@@ -143,7 +193,7 @@ final class RecursiveProofContext {
         TreePath superclassTreePath = trees.getPath(superclassType);
         if (superclassTreePath == null) {
             failures.add(failure(
-                    DiagnosticId.INHERITED_STATE_UNPROVEN,
+                    effectiveDiagnostic(DiagnosticId.INHERITED_STATE_UNPROVEN, violationDiagnostic),
                     superclassPath,
                     superclass + " -> source is unavailable; inherited state and behavior cannot be established",
                     typePath.getLeaf(),
@@ -153,7 +203,7 @@ final class RecursiveProofContext {
 
         ProofNode superclassNode = node(superclassType);
         node.dependencies.add(superclassNode);
-        proveSourceType(superclassType, superclassTreePath, superclassPath);
+        proveSourceType(superclassType, superclassTreePath, superclassPath, violationDiagnostic);
         return superclassNode.state != ProofState.FAILED;
     }
 
@@ -162,8 +212,10 @@ final class RecursiveProofContext {
             TypeElement owner,
             StateField stateField,
             TreePath ownerPath,
-            String incomingPath) {
-        Element field = stateField.element;
+            String incomingPath,
+            DiagnosticId violationDiagnostic,
+            List<CollectionProof> collectionProofs) {
+        VariableElement field = (VariableElement) stateField.element;
         TreePath fieldPath = trees.getPath(field);
         Tree tree = fieldPath == null ? ownerPath.getLeaf() : fieldPath.getLeaf();
         CompilationUnitTree unit = fieldPath == null
@@ -179,7 +231,7 @@ final class RecursiveProofContext {
         if (!field.getModifiers().contains(Modifier.PRIVATE)
                 && !field.getModifiers().contains(Modifier.FINAL)) {
             failures.add(failure(
-                    DiagnosticId.EXTERNALLY_WRITABLE_FIELD,
+                    effectiveDiagnostic(DiagnosticId.EXTERNALLY_WRITABLE_FIELD, violationDiagnostic),
                     retainedPath,
                     stateField.kind == StateKind.STATIC
                             ? "non-private, non-final static field is directly writable after class initialization"
@@ -189,8 +241,118 @@ final class RecursiveProofContext {
             proven = false;
         }
 
-        if (!proveReference(node, field.asType(), retainedPath, tree, unit)) {
+        CollectionTypeModel.Shape collectionShape = collectionTypeModel.shape(field.asType());
+        if (collectionShape == CollectionTypeModel.Shape.UNSUPPORTED) {
+            failures.add(failure(
+                    DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                    retainedPath,
+                    field.asType() + " -> declared collection type is outside the supported Collection, List, Set, and Map abstractions",
+                    tree,
+                    unit));
+            return false;
+        }
+        if (collectionShape != CollectionTypeModel.Shape.NOT_COLLECTION) {
+            if (field.getModifiers().contains(Modifier.FINAL)
+                    && !field.getModifiers().contains(Modifier.PRIVATE)) {
+                failures.add(failure(
+                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                        retainedPath,
+                        "non-private final collection field exposes mutation-capable retained state",
+                        tree,
+                        unit));
+                proven = false;
+            }
+            CollectionProof collectionProof = new CollectionProof(
+                    field,
+                    collectionShape,
+                    retainedPath,
+                    stateField.kind == StateKind.STATIC,
+                    tree,
+                    unit,
+                    effectiveDiagnostic(DiagnosticId.POST_FREEZE_WRITE, violationDiagnostic));
+            collectionProofs.add(collectionProof);
+            if (!proveCollectionArguments(
+                    node, field.asType(), collectionProof, tree, unit)) {
+                proven = false;
+            }
+            return proven;
+        }
+
+        if (!proveReference(
+                node,
+                field.asType(),
+                retainedPath,
+                tree,
+                unit,
+                violationDiagnostic)) {
             proven = false;
+        }
+        return proven;
+    }
+
+    private boolean proveCollectionArguments(
+            ProofNode owner,
+            TypeMirror collectionType,
+            CollectionProof collectionProof,
+            Tree tree,
+            CompilationUnitTree unit) {
+        List<? extends TypeMirror> arguments = collectionTypeModel.arguments(collectionType);
+        int expected = collectionProof.getShape() == CollectionTypeModel.Shape.MAP ? 2 : 1;
+        if (arguments.size() != expected) {
+            failures.add(failure(
+                    DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                    collectionProof.getPath(),
+                    collectionType + " -> raw collection declarations are unsupported; exact generic roles are required",
+                    tree,
+                    unit));
+            return false;
+        }
+
+        boolean proven = true;
+        for (int index = 0; index < arguments.size(); index++) {
+            TypeMirror argument = arguments.get(index);
+            String role;
+            if (collectionProof.getShape() == CollectionTypeModel.Shape.MAP) {
+                role = index == 0 ? "key" : "value";
+            } else {
+                role = "element";
+            }
+            String argumentPath = appendPath(collectionProof.getPath(), role);
+            if (argument.getKind() == TypeKind.WILDCARD) {
+                WildcardType wildcard = (WildcardType) argument;
+                failures.add(failure(
+                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                        argumentPath,
+                        wildcard + " -> wildcard collection arguments do not establish an exact runtime item type",
+                        tree,
+                        unit));
+                proven = false;
+            } else if (argument.getKind() == TypeKind.TYPEVAR) {
+                TypeVariable variable = (TypeVariable) argument;
+                failures.add(failure(
+                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                        argumentPath,
+                        variable + " -> unresolved collection type variables are unsupported",
+                        tree,
+                        unit));
+                proven = false;
+            } else if (collectionTypeModel.isCollectionLike(argument)) {
+                failures.add(failure(
+                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                        argumentPath,
+                        argument + " -> collections nested inside collections are unsupported because inner-container provenance is not implemented",
+                        tree,
+                        unit));
+                proven = false;
+            } else if (!proveReference(
+                    owner,
+                    argument,
+                    argumentPath,
+                    tree,
+                    unit,
+                    DiagnosticId.REACHABLE_REFERENCE_UNPROVEN)) {
+                proven = false;
+            }
         }
         return proven;
     }
@@ -200,7 +362,8 @@ final class RecursiveProofContext {
             TypeMirror referenceType,
             String retainedPath,
             Tree tree,
-            CompilationUnitTree unit) {
+            CompilationUnitTree unit,
+            DiagnosticId violationDiagnostic) {
         if (referenceTypeProof.isProvenImmutable(referenceType)) {
             return true;
         }
@@ -268,8 +431,14 @@ final class RecursiveProofContext {
 
         ProofNode referencedNode = node(referencedType);
         owner.dependencies.add(referencedNode);
-        proveSourceType(referencedType, referencedPath, retainedPath);
+        proveSourceType(referencedType, referencedPath, retainedPath, violationDiagnostic);
         return referencedNode.state != ProofState.FAILED;
+    }
+
+    private static DiagnosticId effectiveDiagnostic(
+            DiagnosticId normalDiagnostic,
+            DiagnosticId violationDiagnostic) {
+        return violationDiagnostic == null ? normalDiagnostic : violationDiagnostic;
     }
 
     private void propagateFailures() {
