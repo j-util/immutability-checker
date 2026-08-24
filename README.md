@@ -70,8 +70,8 @@ first milestone implements a deliberately narrower, sound vertical slice:
 - records on record-capable JDKs;
 - static member classes, but not non-static member or local classes;
 - primitive instance fields; and
-- exactly these modeled immutable JDK leaves: primitive wrappers, `String`,
-  `BigInteger`, `BigDecimal`, and `UUID`.
+- exactly these modeled immutable JDK leaves: `Boolean`, `Byte`, `Short`,
+  `Integer`, `Long`, `Character`, `Float`, `Double`, `String`, and `UUID`.
 
 The processor skips static fields. A non-private, non-final instance field fails
 because callers can write it directly. A private non-final field can pass when
@@ -79,6 +79,20 @@ every direct write targets the object currently being constructed and occurs in
 that object's field initializer, instance initializer, or constructor. Direct
 assignments, compound assignments, and prefix/postfix increment or decrement are
 resolved through compiler symbols rather than source spelling.
+
+This milestone analyzes direct source-level field writes. It does not detect or
+model indirect field mutation performed through `VarHandle`,
+`AtomicIntegerFieldUpdater`, `AtomicLongFieldUpdater`,
+`AtomicReferenceFieldUpdater`, `MethodHandle` field setters, reflection,
+`Unsafe`, JNI/native code, or bytecode instrumentation. Those mechanisms are
+outside the current supported static-analysis model. A mutation not being
+detected or modeled does not mean that the class has been proven immutable.
+
+The known final JDK leaves listed above are explicit atomic semantic models.
+Their internal implementation details, including implementation caches, are not
+recursively analyzed. This does not permit lazy mutation inside a user class
+annotated with this project's `@Immutable`; such post-construction state changes
+remain forbidden.
 
 Constructor-only helper reachability is not analyzed yet. A direct field write
 inside a helper method therefore fails conservatively even if current source

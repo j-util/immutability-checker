@@ -216,7 +216,7 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
                 && !element.getModifiers().contains(Modifier.STATIC);
     }
 
-    private static boolean isCurrentInstanceTarget(ExpressionTree target) {
+    private boolean isCurrentInstanceTarget(ExpressionTree target) {
         ExpressionTree unwrapped = unwrap(target);
         if (unwrapped instanceof IdentifierTree) {
             return true;
@@ -225,8 +225,21 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
             return false;
         }
         ExpressionTree receiver = unwrap(((MemberSelectTree) unwrapped).getExpression());
-        return receiver instanceof IdentifierTree
-                && ((IdentifierTree) receiver).getName().contentEquals("this");
+        if (receiver instanceof IdentifierTree) {
+            return ((IdentifierTree) receiver).getName().contentEquals("this");
+        }
+        if (!(receiver instanceof MemberSelectTree)) {
+            return false;
+        }
+
+        MemberSelectTree qualifiedThis = (MemberSelectTree) receiver;
+        if (!qualifiedThis.getIdentifier().contentEquals("this")) {
+            return false;
+        }
+        TreePath qualifierPath = TreePath.getPath(
+                getCurrentPath().getCompilationUnit(),
+                unwrap(qualifiedThis.getExpression()));
+        return qualifierPath != null && rootType.equals(trees.getElement(qualifierPath));
     }
 
     private static ExpressionTree unwrap(ExpressionTree expression) {

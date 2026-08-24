@@ -70,9 +70,62 @@ class ImmutableProcessorTest {
                 + "@Immutable final class Leaves {\n"
                 + "  private Boolean bool; private Byte b; private Short s; private Integer i;\n"
                 + "  private Long l; private Character c; private Float f; private Double d;\n"
-                + "  private String text; private java.math.BigInteger bigInteger;\n"
-                + "  private java.math.BigDecimal bigDecimal; private java.util.UUID uuid;\n"
+                + "  private String text; private java.util.UUID uuid;\n"
                 + "}\n");
+    }
+
+    @Test
+    void rejectsBigIntegerFieldAsUnprovenReferenceState() {
+        assertFails("example.Holder", HEADER
+                + "@Immutable final class Holder {\n"
+                + "  private java.math.BigInteger value;\n"
+                + "  Holder(java.math.BigInteger value) { this.value = value; }\n"
+                + "}\n",
+                "[IC005]", "Holder.value", "java.math.BigInteger",
+                "reachable-reference verification is not implemented",
+                "immutability cannot be established");
+    }
+
+    @Test
+    void rejectsBigDecimalFieldAsUnprovenReferenceState() {
+        assertFails("example.Holder", HEADER
+                + "@Immutable final class Holder {\n"
+                + "  private java.math.BigDecimal value;\n"
+                + "  Holder(java.math.BigDecimal value) { this.value = value; }\n"
+                + "}\n",
+                "[IC005]", "Holder.value", "java.math.BigDecimal",
+                "reachable-reference verification is not implemented",
+                "immutability cannot be established");
+    }
+
+    @Test
+    void rejectsBigIntegerFieldThatCanHoldMutableSubclass() {
+        assertFails("example.Holder", HEADER
+                + "final class MutableBigInteger extends java.math.BigInteger {\n"
+                + "  private int revision;\n"
+                + "  MutableBigInteger(String value) { super(value); }\n"
+                + "  void mutate() { revision++; }\n"
+                + "}\n"
+                + "@Immutable final class Holder {\n"
+                + "  private java.math.BigInteger value;\n"
+                + "  Holder(java.math.BigInteger value) { this.value = value; }\n"
+                + "}\n",
+                "[IC005]", "Holder.value", "reachable-reference verification is not implemented");
+    }
+
+    @Test
+    void rejectsBigDecimalFieldThatCanHoldMutableSubclass() {
+        assertFails("example.Holder", HEADER
+                + "final class MutableBigDecimal extends java.math.BigDecimal {\n"
+                + "  private int revision;\n"
+                + "  MutableBigDecimal(String value) { super(value); }\n"
+                + "  void mutate() { revision++; }\n"
+                + "}\n"
+                + "@Immutable final class Holder {\n"
+                + "  private java.math.BigDecimal value;\n"
+                + "  Holder(java.math.BigDecimal value) { this.value = value; }\n"
+                + "}\n",
+                "[IC005]", "Holder.value", "reachable-reference verification is not implemented");
     }
 
     @Test
@@ -102,6 +155,27 @@ class ImmutableProcessorTest {
         assertPasses("example.Value", HEADER
                 + "@Immutable final class Value { private int value; Value() { this(1); }\n"
                 + "  Value(int value) { this.value = value; } }\n");
+    }
+
+    @Test
+    void acceptsQualifiedCurrentInstanceWriteInConstructor() {
+        assertPasses("example.Value", HEADER
+                + "@Immutable final class Value { private int value;\n"
+                + "  Value(int value) { Value.this.value = value; } }\n");
+    }
+
+    @Test
+    void acceptsQualifiedCurrentInstanceWriteInFieldInitializer() {
+        assertPasses("example.Value", HEADER
+                + "@Immutable final class Value { private int value;\n"
+                + "  private int initialized = (Value.this.value = 1); }\n");
+    }
+
+    @Test
+    void acceptsQualifiedCurrentInstanceWriteInInstanceInitializer() {
+        assertPasses("example.Value", HEADER
+                + "@Immutable final class Value { private int value;\n"
+                + "  { Value.this.value = 1; } }\n");
     }
 
     @Test
@@ -247,6 +321,22 @@ class ImmutableProcessorTest {
     }
 
     @Test
+    void rejectsCastedCurrentInstanceReceiverInConstructor() {
+        assertFails("example.Value", HEADER
+                + "@Immutable final class Value { private int value;\n"
+                + "  Value(int value) { ((Value) this).value = value; } }\n",
+                "[IC006]", "receiver not proven to be the object under construction");
+    }
+
+    @Test
+    void rejectsAliasedCurrentInstanceReceiverInConstructor() {
+        assertFails("example.Value", HEADER
+                + "@Immutable final class Value { private int value;\n"
+                + "  Value(int value) { Value alias = this; alias.value = value; } }\n",
+                "[IC006]", "receiver not proven to be the object under construction");
+    }
+
+    @Test
     void rejectsNestedTypeMutatingOuterAnnotatedInstance() {
         assertFails("example.Counter", HEADER
                 + "@Immutable final class Counter { private int value;\n"
@@ -268,6 +358,14 @@ class ImmutableProcessorTest {
                 + "@Immutable final class Counter { private int value; Counter() {\n"
                 + "  Runnable deferred = () -> value++; } }\n",
                 "[IC006]", "Counter.value", "lambda in Counter()");
+    }
+
+    @Test
+    void rejectsQualifiedCurrentInstanceWriteInLambdaDeclaredInConstructor() {
+        assertFails("example.Value", HEADER
+                + "@Immutable final class Value { private int value; Value() {\n"
+                + "  Runnable deferred = () -> Value.this.value++; } }\n",
+                "[IC006]", "Value.value", "lambda in Value()", "outside construction");
     }
 
     @Test

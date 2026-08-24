@@ -23,8 +23,6 @@ final class KnownImmutableLeafProof implements ReferenceTypeProof {
                     "java.lang.Float",
                     "java.lang.Double",
                     "java.lang.String",
-                    "java.math.BigInteger",
-                    "java.math.BigDecimal",
                     "java.util.UUID")));
 
     private final Types types;

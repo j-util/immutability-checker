@@ -12,3 +12,11 @@ All notable changes to this project will be documented in this file.
 - Added JDK 8 and JDK 26 continuous integration.
 - Added packaged-artifact verification for class-file versions, manifest metadata,
   license and service entries, processor discovery, and accepting/rejecting fixtures.
+- Removed subclassable `BigInteger` and `BigDecimal` from the trusted immutable
+  leaf set.
+- Added symbol-resolved `RootType.this.field` writes to supported direct
+  construction contexts.
+- Clarified the direct source-level write model and its indirect-mutation proof
+  boundary.
+- Added regressions for unproven numeric references, qualified root `this`, and
+  conservatively rejected deferred, foreign, casted, and aliased receivers.
