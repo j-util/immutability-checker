@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Added cycle-safe recursive retained-state verification for source-available
+  ordinary classes, their source superclasses, and further source field types.
+- Added deterministic complete reference paths and fail-closed diagnostics for
+  unavailable source, unsupported references, and unresolved runtime subtypes.
+- Deferred record verification to V2 and rejected annotated records with `IC001`.
 - Added the initial single-module Maven project and Java 8-compatible artifact.
 - Added the source-retained `@Immutable` annotation and JSR 269 processor discovery.
 - Added sound direct-state verification with the construction freeze boundary.

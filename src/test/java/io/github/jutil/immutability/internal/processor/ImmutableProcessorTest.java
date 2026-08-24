@@ -36,6 +36,14 @@ class ImmutableProcessorTest {
     }
 
     @Test
+    void acceptsNonFinalAnnotatedRootWhenItsStateIsProven() {
+        assertPasses("example.Value", HEADER
+                + "@Immutable class Value {\n"
+                + "  private int value; Value(int value) { this.value = value; }\n"
+                + "}\n");
+    }
+
+    @Test
     void acceptsPrivateNonFinalStringAssignedInConstructor() {
         assertPasses("example.Currency", HEADER
                 + "@Immutable final class Currency {\n"
@@ -75,6 +83,60 @@ class ImmutableProcessorTest {
     }
 
     @Test
+    void acceptsTwoLevelRecursivelyImmutableSourceGraph() {
+        assertPasses("example.Person", HEADER
+                + "@Immutable final class Person {\n"
+                + "  private final Address address; Person(Address address) { this.address = address; }\n"
+                + "}\n"
+                + "final class Address {\n"
+                + "  private String city; Address(String city) { this.city = city; }\n"
+                + "}\n");
+    }
+
+    @Test
+    void acceptsThreeLevelRecursivelyImmutableSourceGraph() {
+        assertPasses("example.Person", HEADER
+                + "@Immutable final class Person {\n"
+                + "  private final Address address; Person(Address address) { this.address = address; }\n"
+                + "}\n"
+                + "final class Address {\n"
+                + "  private final Country country; Address(Country country) { this.country = country; }\n"
+                + "}\n"
+                + "final class Country {\n"
+                + "  private String code; Country(String code) { this.code = code; }\n"
+                + "}\n");
+    }
+
+    @Test
+    void referencedSourceClassesDoNotRequireImmutableAnnotation() {
+        assertPasses("example.Order", HEADER
+                + "@Immutable final class Order {\n"
+                + "  private final Line line; Order(Line line) { this.line = line; }\n"
+                + "}\n"
+                + "final class Line { private int quantity; Line(int quantity) { this.quantity = quantity; } }\n");
+    }
+
+    @Test
+    void acceptsSourceSuperclassWithRecursivelyImmutableState() {
+        assertPasses("example.Customer", HEADER
+                + "final class Address { private String city; Address(String city) { this.city = city; } }\n"
+                + "class Party {\n"
+                + "  private final Address address; Party(Address address) { this.address = address; }\n"
+                + "}\n"
+                + "@Immutable final class Customer extends Party {\n"
+                + "  Customer(Address address) { super(address); }\n"
+                + "}\n");
+    }
+
+    @Test
+    void acceptsCycleSafeRecursivelyImmutableSourceGraph() {
+        assertPasses("example.Graph", HEADER
+                + "@Immutable final class Graph { private final Left left; Graph(Left left) { this.left = left; } }\n"
+                + "final class Left { private final Right right; Left(Right right) { this.right = right; } }\n"
+                + "final class Right { private final Left left; Right(Left left) { this.left = left; } }\n");
+    }
+
+    @Test
     void rejectsBigIntegerFieldAsUnprovenReferenceState() {
         assertFails("example.Holder", HEADER
                 + "@Immutable final class Holder {\n"
@@ -82,8 +144,8 @@ class ImmutableProcessorTest {
                 + "  Holder(java.math.BigInteger value) { this.value = value; }\n"
                 + "}\n",
                 "[IC005]", "Holder.value", "java.math.BigInteger",
-                "reachable-reference verification is not implemented",
-                "immutability cannot be established");
+                "unresolved runtime subtype analysis", "declared type is non-final",
+                "exact runtime type cannot be established");
     }
 
     @Test
@@ -94,8 +156,8 @@ class ImmutableProcessorTest {
                 + "  Holder(java.math.BigDecimal value) { this.value = value; }\n"
                 + "}\n",
                 "[IC005]", "Holder.value", "java.math.BigDecimal",
-                "reachable-reference verification is not implemented",
-                "immutability cannot be established");
+                "unresolved runtime subtype analysis", "declared type is non-final",
+                "exact runtime type cannot be established");
     }
 
     @Test
@@ -110,7 +172,7 @@ class ImmutableProcessorTest {
                 + "  private java.math.BigInteger value;\n"
                 + "  Holder(java.math.BigInteger value) { this.value = value; }\n"
                 + "}\n",
-                "[IC005]", "Holder.value", "reachable-reference verification is not implemented");
+                "[IC005]", "Holder.value", "unresolved runtime subtype analysis");
     }
 
     @Test
@@ -125,7 +187,7 @@ class ImmutableProcessorTest {
                 + "  private java.math.BigDecimal value;\n"
                 + "  Holder(java.math.BigDecimal value) { this.value = value; }\n"
                 + "}\n",
-                "[IC005]", "Holder.value", "reachable-reference verification is not implemented");
+                "[IC005]", "Holder.value", "unresolved runtime subtype analysis");
     }
 
     @Test
@@ -199,10 +261,11 @@ class ImmutableProcessorTest {
     }
 
     @Test
-    void acceptsRecordWithKnownLeafComponentOnModernJdk() {
+    void rejectsAnnotatedRecordAsIntentionallyDeferredToV2() {
         assumeRecordsSupported();
-        assertPasses("example.Identifier", HEADER
-                + "@Immutable record Identifier(String value) {}\n");
+        assertFails("example.Identifier", HEADER
+                + "@Immutable record Identifier(String value) {}\n",
+                "[IC001]", "example.Identifier", "records are intentionally deferred to V2");
     }
 
     @Test
@@ -235,10 +298,20 @@ class ImmutableProcessorTest {
     }
 
     @Test
-    void rejectsUnanalyzedSuperclass() {
+    void rejectsMutableSourceSuperclass() {
         assertFails("example.Child", HEADER
-                + "class Parent {} @Immutable final class Child extends Parent {}\n",
-                "[IC003]", "Child.<superclass>", "example.Parent");
+                + "class Parent { private int value; void mutate() { value++; } }\n"
+                + "@Immutable final class Child extends Parent {}\n",
+                "[IC006]", "Child.<superclass> -> Parent.value", "Parent.mutate()",
+                "outside construction");
+    }
+
+    @Test
+    void rejectsUnavailableCompiledSuperclass() {
+        assertFails("example.Child", HEADER
+                + "@Immutable final class Child extends java.util.Date {}\n",
+                "[IC003]", "Child.<superclass>", "java.util.Date", "source is unavailable",
+                "inherited state and behavior cannot be established");
     }
 
     @Test
@@ -377,10 +450,98 @@ class ImmutableProcessorTest {
     }
 
     @Test
+    void rejectsMutationInDirectlyReferencedSourceClass() {
+        assertFails("example.Person", HEADER
+                + "@Immutable final class Person { private final Address address = null; }\n"
+                + "final class Address { private String city; void move(String city) { this.city = city; } }\n",
+                "[IC006]", "Person.address -> Address.city", "Address.move()",
+                "outside construction");
+    }
+
+    @Test
+    void immutableAnnotationOnReferencedTypeIsNotTreatedAsProof() {
+        assertFails("example.Person", HEADER
+                + "@Immutable final class Person { private final Address address = null; }\n"
+                + "@Immutable final class Address {\n"
+                + "  private String city; void move(String city) { this.city = city; }\n"
+                + "}\n",
+                "[IC006]", "Person.address -> Address.city", "Address.move()");
+    }
+
+    @Test
+    void rejectsMutationSeveralLevelsBelowRoot() {
+        assertFails("example.Person", HEADER
+                + "@Immutable final class Person { private final Address address = null; }\n"
+                + "final class Address { private final Country country = null; }\n"
+                + "final class Country { private String code; void rename(String code) { this.code = code; } }\n",
+                "[IC006]", "Person.address -> Address.country -> Country.code",
+                "Country.rename()", "outside construction");
+    }
+
+    @Test
+    void rejectsExternallyWritableFieldInReferencedSourceClass() {
+        assertFails("example.Root", HEADER
+                + "@Immutable final class Root { private final State state = null; }\n"
+                + "final class State { int value; }\n",
+                "[IC004]", "Root.state -> State.value", "directly writable");
+    }
+
+    @Test
+    void rejectsReferencedSourceInterfaceAsUnresolvedRuntimeSubtype() {
+        assertFails("example.Root", HEADER
+                + "interface State {}\n"
+                + "@Immutable final class Root { private final State state = null; }\n",
+                "[IC005]", "Root.state", "unresolved runtime subtype analysis",
+                "declared interface");
+    }
+
+    @Test
+    void rejectsNonFinalReferencedSourceTypeAsUnresolvedRuntimeSubtype() {
+        assertFails("example.Root", HEADER
+                + "class State { private int value; }\n"
+                + "@Immutable final class Root { private final State state = null; }\n",
+                "[IC005]", "Root.state", "unresolved runtime subtype analysis",
+                "declared type is non-final", "exact runtime type cannot be established");
+    }
+
+    @Test
+    void rejectsCompiledExternalTypeWithoutSemanticModel() {
+        assertFails("example.Root", HEADER
+                + "@Immutable final class Root { private final java.time.Instant instant = null; }\n",
+                "[IC005]", "Root.instant", "java.time.Instant", "source is unavailable",
+                "no trusted semantic model");
+    }
+
+    @Test
+    void reportsCompleteRecursivePathDeterministically() {
+        String source = HEADER
+                + "@Immutable final class Person { private final Address address = null; }\n"
+                + "final class Address { private final Country country = null; }\n"
+                + "final class Country { String code; }\n";
+        CompilerTestHarness.CompilationResult first = compiler.compile("example.Person", source);
+        CompilerTestHarness.CompilationResult second = compiler.compile("example.Person", source);
+        assertFalse(first.isSuccessful());
+        assertFalse(second.isSuccessful());
+        assertEquals(first.joinedErrors(), second.joinedErrors());
+        assertTrue(first.joinedErrors().contains(
+                "Person.address -> Address.country -> Country.code"), first.joinedErrors());
+    }
+
+    @Test
+    void recursiveCycleContainingViolationTerminatesAndReportsCompletePath() {
+        assertFails("example.Graph", HEADER
+                + "@Immutable final class Graph { private final Left left = null; }\n"
+                + "final class Left { private final Right right = null; }\n"
+                + "final class Right { private final Left left = null; private int revision;\n"
+                + "  void revise() { revision++; } }\n",
+                "[IC006]", "Graph.left -> Left.right -> Right.revision", "Right.revise()");
+    }
+
+    @Test
     void rejectsArrayFieldAsUnprovenReferenceState() {
         assertFails("example.Value", HEADER
                 + "@Immutable final class Value { private final byte[] value = new byte[0]; }\n",
-                "[IC005]", "Value.value", "reachable-reference verification is not implemented");
+                "[IC005]", "Value.value", "outside the current recursive proof model");
     }
 
     @Test
@@ -392,10 +553,10 @@ class ImmutableProcessorTest {
     }
 
     @Test
-    void rejectsUserDefinedReferenceField() {
+    void rejectsNonFinalUserDefinedReferenceField() {
         assertFails("example.Value", HEADER
                 + "class State {} @Immutable final class Value { private final State state = new State(); }\n",
-                "[IC005]", "Value.state", "example.State");
+                "[IC005]", "Value.state", "example.State", "unresolved runtime subtype analysis");
     }
 
     @Test
@@ -410,14 +571,6 @@ class ImmutableProcessorTest {
         assertFails("example.Value", HEADER
                 + "@Immutable final class Value { private final Object value = new Object(); }\n",
                 "[IC005]", "Value.value", "java.lang.Object");
-    }
-
-    @Test
-    void rejectsRecordWithListComponentOnModernJdk() {
-        assumeRecordsSupported();
-        assertFails("example.Names", HEADER
-                + "@Immutable record Names(java.util.List<String> values) {}\n",
-                "[IC005]", "Names.values", "reachable-reference verification is not implemented");
     }
 
     @Test

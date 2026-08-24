@@ -34,6 +34,7 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
 
     private final TypeElement rootType;
     private final String rootName;
+    private final String incomingPath;
     private final Trees trees;
     private final List<ProofFailure> failures;
 
@@ -44,10 +45,12 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
     DirectFieldWriteScanner(
             TypeElement rootType,
             String rootName,
+            String incomingPath,
             Trees trees,
             List<ProofFailure> failures) {
         this.rootType = rootType;
         this.rootName = rootName;
+        this.incomingPath = incomingPath;
         this.trees = trees;
         this.failures = failures;
     }
@@ -195,18 +198,26 @@ final class DirectFieldWriteScanner extends TreePathScanner<Void, Void> {
         } else {
             reason = "write in " + executableContext + " occurs outside construction";
             if (constructorHelperCandidate) {
-                reason += "; constructor-only helper reachability is not analyzed in Milestone 1";
+                reason += "; constructor-only helper reachability is not analyzed in the current proof model";
             }
         }
 
         failures.add(ProofFailure.create(
                 DiagnosticId.POST_CONSTRUCTION_WRITE,
                 rootName,
-                rootType.getSimpleName() + "." + targetElement.getSimpleName(),
+                fieldPath(targetElement),
                 reason,
                 writeTree,
                 getCurrentPath().getCompilationUnit(),
                 trees));
+    }
+
+    private String fieldPath(Element field) {
+        String localPath = rootType.getSimpleName() + "." + field.getSimpleName();
+        if (incomingPath.isEmpty()) {
+            return localPath;
+        }
+        return incomingPath + " -> " + localPath;
     }
 
     private boolean isRootInstanceField(Element element) {

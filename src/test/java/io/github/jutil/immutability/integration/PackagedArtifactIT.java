@@ -64,7 +64,10 @@ class PackagedArtifactIT {
                 "package fixture;\n"
                         + "import io.github.jutil.immutability.Immutable;\n"
                         + "@Immutable final class Passing {\n"
-                        + "  private String value; Passing(String value) { this.value = value; }\n"
+                        + "  private final State state; Passing(State state) { this.state = state; }\n"
+                        + "}\n"
+                        + "final class State {\n"
+                        + "  private String value; State(String value) { this.value = value; }\n"
                         + "}\n");
         assertTrue(passing.successful, passing.diagnostics);
 

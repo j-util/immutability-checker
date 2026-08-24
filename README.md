@@ -60,39 +60,53 @@ Memory Model, general method purity, or general thread safety. Reflection,
 ordinary-Java static-analysis model are not part of the guarantee. The complete
 semantic contract is in [PROJECT_INVARIANTS.md](PROJECT_INVARIANTS.md).
 
-## Milestone 1 proof capability
+## Current development status
 
-The final project contract covers the full reachable instance-state graph,
-including ownership, aliases, escapes, calls, inheritance, and mutation. This
-first milestone implements a deliberately narrower, sound vertical slice:
+V1 targets ordinary Java classes with recursive retained-state analysis. The
+current development slice follows source-available ordinary classes through
+non-static fields and source-available superclasses. Referenced source classes
+do not need `@Immutable`: the root annotation requests verification of the
+reachable source graph. Traversal is cycle-safe and a diagnostic includes the
+complete deterministic path to the failing field or superclass.
 
-- ordinary classes whose direct superclass is exactly `Object`;
-- records on record-capable JDKs;
-- static member classes, but not non-static member or local classes;
+The current proof capability supports:
+
+- annotated top-level ordinary classes and static member classes;
+- recursively referenced source classes when the declared reference type is
+  `final`, so the exact runtime type is established by the declaration;
+- recursively analyzed source superclasses, which do not need to be `final`;
 - primitive instance fields; and
 - exactly these modeled immutable JDK leaves: `Boolean`, `Byte`, `Short`,
   `Integer`, `Long`, `Character`, `Float`, `Double`, `String`, and `UUID`.
 
-The processor skips static fields. A non-private, non-final instance field fails
-because callers can write it directly. A private non-final field can pass when
-every direct write targets the object currently being constructed and occurs in
-that object's field initializer, instance initializer, or constructor. Direct
-assignments, compound assignments, and prefix/postfix increment or decrement are
-resolved through compiler symbols rather than source spelling.
+Records are intentionally deferred to V2. An annotated record is rejected with
+`IC001`, even when all of its components use known leaves.
 
-This milestone analyzes direct source-level field writes. It does not detect or
-model indirect field mutation performed through `VarHandle`,
-`AtomicIntegerFieldUpdater`, `AtomicLongFieldUpdater`,
-`AtomicReferenceFieldUpdater`, `MethodHandle` field setters, reflection,
-`Unsafe`, JNI/native code, or bytecode instrumentation. Those mechanisms are
-outside the current supported static-analysis model. A mutation not being
-detected or modeled does not mean that the class has been proven immutable.
+For every source class in the proof graph, the processor skips static fields,
+checks externally writable instance fields, and scans direct field writes. A
+non-private, non-final instance field fails because callers can write it
+directly. A private non-final field can pass when every direct write targets the
+object currently being constructed and occurs in that object's field
+initializer, instance initializer, or constructor. Direct assignments,
+compound assignments, and prefix/postfix increment or decrement are resolved
+through compiler symbols rather than source spelling.
+
+Cycle states are explicit: unseen source types become visiting while their
+outgoing field and superclass edges are checked, then proven or failed. A back
+edge to a visiting type closes the cycle without recursion; failures are
+propagated through the proof graph before verification completes.
 
 The known final JDK leaves listed above are explicit atomic semantic models.
 Their internal implementation details, including implementation caches, are not
-recursively analyzed. This does not permit lazy mutation inside a user class
-annotated with this project's `@Immutable`; such post-construction state changes
-remain forbidden.
+recursively analyzed. This does not permit lazy mutation inside a user class;
+such direct post-construction state changes remain forbidden.
+
+Polymorphic retained references fail closed in this development slice. A
+declared interface, or a non-final declared source class whose exact allocation
+is not established, produces `IC005` for unresolved runtime subtype analysis.
+This is a limitation of the current analysis, not a rule that immutable classes
+must be final. Exact-allocation and ownership analysis are planned for a later
+milestone.
 
 Constructor-only helper reachability is not analyzed yet. A direct field write
 inside a helper method therefore fails conservatively even if current source
@@ -100,27 +114,33 @@ appears to call that helper only from a constructor.
 
 ### Fail-closed limitations
 
-Milestone 1 does not yet implement recursive reference-graph verification,
-collection or array ownership, defensive-copy recognition, alias analysis,
-general escape analysis, method-call effects, constructor-helper call graphs,
-superclass traversal, bytecode analysis, or cross-module proof metadata.
+The current implementation does not yet model ownership, collections, arrays,
+defensive copies, aliases, escapes, method-call effects, constructor-helper call
+graphs, exact allocations, bytecode, or cross-module proof metadata. A
+referenced compiled or external type without an explicit semantic model fails
+with `IC005`; an unavailable non-`Object` superclass fails with `IC003`.
 
-Consequently, fields containing arrays, `List`, other collections, or custom
-reference types currently fail because those reference paths are unproven. They
-are not categorically mutable or permanently forbidden by the final project
-contract. A `final` modifier does not make an unproven reference pass. Unknown
-always fails closed.
+Fields containing arrays, `List`, or other collections therefore remain
+unproven. They are not categorically mutable or permanently forbidden by the
+project contract. A `final` field modifier and an `@Immutable` annotation on a
+referenced type are not proof. Unknown always fails closed.
+
+The direct-write scanner does not detect or model indirect field mutation
+performed through `VarHandle`, `AtomicIntegerFieldUpdater`,
+`AtomicLongFieldUpdater`, `AtomicReferenceFieldUpdater`, `MethodHandle` field
+setters, reflection, `Unsafe`, JNI/native code, or bytecode instrumentation.
+Those mechanisms are outside the current supported static-analysis model.
 
 Diagnostics use stable identifiers:
 
 | Identifier | Meaning |
 | --- | --- |
 | `IC000` | Analysis unavailable |
-| `IC001` | Unsupported annotated type |
+| `IC001` | Unsupported annotated type, including records deferred to V2 |
 | `IC002` | Implicit or captured enclosing state unproven |
-| `IC003` | Inherited state unproven |
+| `IC003` | Inherited state or behavior unproven |
 | `IC004` | Externally writable instance field |
-| `IC005` | Reachable reference state unproven |
+| `IC005` | Reachable reference, source, or runtime subtype unproven |
 | `IC006` | Post-construction field write |
 
 ## Compiler setup
@@ -171,7 +191,8 @@ dependencies {
 The processor and annotation produce Java 8-compatible class files and use only
 supported `javax.annotation.processing`, `javax.lang.model`, `javax.tools`, and
 `com.sun.source` compiler APIs. The CI matrix runs the complete build on Temurin
-JDK 8 and JDK 26. Records are analyzed only when the compiler supports them.
+JDK 8 and JDK 26. On record-capable compilers, annotated records are rejected as
+intentionally deferred to V2.
 
 ## Build
 
