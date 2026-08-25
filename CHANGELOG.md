@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Closed collection reference-flow soundness gaps for field-declaration storage,
+  raw and unchecked insertion/copy paths, multi-target conditionals, and modern
+  switch-expression flows while preserving Java 8 artifact compatibility.
 - Added owned `Collection`, `List`, `Set`, and `Map` verification for exact
   fresh `ArrayList`, `HashSet`, `LinkedHashSet`, `HashMap`, and `LinkedHashMap`
   allocations, including supported copy constructors.

@@ -2,6 +2,7 @@ package io.github.jutil.immutability.internal.processor;
 
 import org.junit.jupiter.api.Test;
 
+import javax.lang.model.SourceVersion;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -222,6 +223,188 @@ class CollectionVerificationTest {
     }
 
     @Test
+    void rejectsCollectionAliasStoredByNestedAnonymousAndLocalFieldDeclarations() {
+        CompilerTestHarness.CompilationResult result = compiler.compile("example.Names", HEADER
+                + "@Immutable public final class Names {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  public final class Leak {\n"
+                + "    public final List<String> exposed = Names.this.values;\n"
+                + "  }\n"
+                + "  Object anonymousLeak() {\n"
+                + "    return new Object() { final List<String> exposed = values; };\n"
+                + "  }\n"
+                + "  Object localLeak() {\n"
+                + "    class LocalLeak { final List<String> exposed = values; }\n"
+                + "    return new LocalLeak();\n"
+                + "  }\n"
+                + "}\n");
+        assertFalse(result.isSuccessful(), "Expected compilation to fail");
+        assertEquals(3, occurrences(result.getErrors(), "stored by a field declaration"),
+                result.joinedErrors());
+        assertEquals(3, occurrences(result.getErrors(), "Names.values"),
+                result.joinedErrors());
+    }
+
+    @Test
+    void rejectsEnclosingNestmateFieldInitializedFromAnnotatedNestedStaticCollection() {
+        assertFails("example.Nest", HEADER
+                + "final class Nest {\n"
+                + "  static List<String> exposed = Value.values;\n"
+                + "  @Immutable static final class Value {\n"
+                + "    private static final List<String> values = new ArrayList<>();\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "Value.<static>.values", "stored by a field declaration");
+    }
+
+    @Test
+    void rejectsExternallyRetainedMutableItemInsertedThroughRawAlias() {
+        assertFails("example.Names", HEADER
+                + "@Immutable final class Names {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  Names(StringBuilder externalMutable) {\n"
+                + "    List raw = values;\n"
+                + "    raw.add(externalMutable);\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "Names.values", "raw or unchecked type",
+                "argument for the element role has type java.lang.StringBuilder");
+    }
+
+    @Test
+    void rejectsDirectRawReceiverAndUncheckedCollectionAlias() {
+        assertFails("example.Names", HEADER
+                + "@Immutable final class Names {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  Names(StringBuilder externalMutable) {\n"
+                + "    ((List) values).add(externalMutable);\n"
+                + "    List<String> unchecked = (List<String>) (List) values;\n"
+                + "    unchecked.set(0, externalMutable.toString());\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "java.util.List.add(java.lang.Object) receiver",
+                "collection alias loses", "raw or unchecked type");
+    }
+
+    @Test
+    void rejectsRawCopyConstructorAndBulkMutationSources() {
+        assertFails("example.Aggregate", HEADER
+                + "@Immutable final class Aggregate {\n"
+                + "  private final List<String> list;\n"
+                + "  private final Map<String, String> map = new HashMap<>();\n"
+                + "  Aggregate(Collection rawItems, Map rawEntries) {\n"
+                + "    list = new ArrayList(rawItems);\n"
+                + "    list.addAll(rawItems);\n"
+                + "    list.addAll(0, rawItems);\n"
+                + "    map.putAll(rawEntries);\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "Aggregate.list", "copy-constructor source loses",
+                "addAll(java.util.Collection) source loses",
+                "putAll(java.util.Map) source loses");
+    }
+
+    @Test
+    void rejectsRawSourceLaunderedThroughUncheckedParameterizedAliases() {
+        assertFails("example.Aggregate", HEADER
+                + "@Immutable final class Aggregate {\n"
+                + "  private final List<String> copied;\n"
+                + "  private final List<String> list = new ArrayList<>();\n"
+                + "  private final Map<String, String> map = new HashMap<>();\n"
+                + "  Aggregate(Collection rawItems, Map rawEntries) {\n"
+                + "    List<String> uncheckedItems = (List<String>) (List) rawItems;\n"
+                + "    Map<String, String> uncheckedEntries =\n"
+                + "        (Map<String, String>) (Map) rawEntries;\n"
+                + "    copied = new ArrayList<>(uncheckedItems);\n"
+                + "    list.addAll(uncheckedItems);\n"
+                + "    map.putAll(uncheckedEntries);\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "Aggregate.copied", "copy-constructor source loses",
+                "Aggregate.list", "addAll(java.util.Collection) source loses",
+                "Aggregate.map", "putAll(java.util.Map) source loses");
+    }
+
+    @Test
+    void rejectsUnsafeArgumentsForEveryInsertionAndReplacementRole() {
+        assertFails("example.Aggregate", HEADER
+                + "@Immutable final class Aggregate {\n"
+                + "  private final List<String> list = new ArrayList<>();\n"
+                + "  private final Map<String, String> map = new HashMap<>();\n"
+                + "  Aggregate(StringBuilder externalMutable) {\n"
+                + "    ((List) list).add(externalMutable);\n"
+                + "    ((List) list).add(0, externalMutable);\n"
+                + "    ((List) list).set(0, externalMutable);\n"
+                + "    ((Map) map).put(externalMutable, externalMutable);\n"
+                + "    ((Map) map).putIfAbsent(externalMutable, externalMutable);\n"
+                + "    ((Map) map).replace(externalMutable, externalMutable);\n"
+                + "    ((Map) map).replace(externalMutable, externalMutable, externalMutable);\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "argument for the element role",
+                "argument for the key role", "argument for the value role",
+                "java.util.Map.putIfAbsent", "java.util.Map.replace");
+    }
+
+    @Test
+    void conditionalMutationChecksEveryPossibleRetainedTarget() {
+        CompilerTestHarness.CompilationResult result = compiler.compile("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> instanceValues = new ArrayList<>();\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values(boolean instance) {\n"
+                + "    List<String> target = instance ? instanceValues : staticValues;\n"
+                + "    target.add(\"x\");\n"
+                + "    (instance ? instanceValues : staticValues).add(\"y\");\n"
+                + "  }\n"
+                + "}\n");
+        assertFalse(result.isSuccessful(), "Expected compilation to fail");
+        assertEquals(2, occurrences(result.getErrors(), "Values.<static>.staticValues"),
+                result.joinedErrors());
+        assertEquals(0, occurrences(result.getErrors(), "Values.instanceValues"),
+                result.joinedErrors());
+    }
+
+    @Test
+    void conditionalEscapeReportsEveryTargetOnceInBranchOrder() {
+        CompilerTestHarness.CompilationResult result = compiler.compile("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> first = new ArrayList<>();\n"
+                + "  private final List<String> second = new ArrayList<>();\n"
+                + "  Object expose(boolean chooseFirst) {\n"
+                + "    return chooseFirst ? first : second;\n"
+                + "  }\n"
+                + "}\n");
+        assertFalse(result.isSuccessful(), "Expected compilation to fail");
+        assertEquals(1, occurrences(result.getErrors(), "Values.first"), result.joinedErrors());
+        assertEquals(1, occurrences(result.getErrors(), "Values.second"), result.joinedErrors());
+        assertTrue(result.joinedErrors().indexOf("Values.first")
+                < result.joinedErrors().indexOf("Values.second"), result.joinedErrors());
+    }
+
+    @Test
+    void switchExpressionAndYieldCollectionFlowsFailClosedOnCapableJdk() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(supportsSwitchExpressions());
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  List<String> exposeArrow(int selector) {\n"
+                + "    return switch (selector) {\n"
+                + "      case 0 -> values;\n"
+                + "      default -> new ArrayList<>();\n"
+                + "    };\n"
+                + "  }\n"
+                + "  List<String> exposeYield(int selector) {\n"
+                + "    return switch (selector) {\n"
+                + "      case 0: yield values;\n"
+                + "      default: yield new ArrayList<>();\n"
+                + "    };\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "Values.values", "escapes through return");
+    }
+
+    @Test
     void acceptsQualifiedCurrentInstanceCollectionOrigin() {
         assertPasses("example.Names", HEADER
                 + "@Immutable final class Names {\n"
@@ -427,7 +610,10 @@ class CollectionVerificationTest {
     @Test
     void rejectsRawCollectionDeclaration() {
         assertFails("example.Names", HEADER
-                + "@Immutable final class Names { private List values = new ArrayList(); }\n",
+                + "@Immutable final class Names {\n"
+                + "  private List values = new ArrayList();\n"
+                + "  Names() { values.add(\"x\"); }\n"
+                + "}\n",
                 "[IC005]", "Names.values", "raw collection declarations are unsupported");
     }
 
@@ -641,5 +827,11 @@ class CollectionVerificationTest {
             }
         }
         return count;
+    }
+
+    private static boolean supportsSwitchExpressions() {
+        String release = SourceVersion.latestSupported().name();
+        int separator = release.lastIndexOf('_');
+        return separator >= 0 && Integer.parseInt(release.substring(separator + 1)) >= 14;
     }
 }

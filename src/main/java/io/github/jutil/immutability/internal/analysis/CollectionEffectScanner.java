@@ -20,6 +20,7 @@ import com.sun.source.tree.TypeCastTree;
 import com.sun.source.tree.VariableTree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
+import com.sun.source.util.TreeScanner;
 import com.sun.source.util.Trees;
 
 import javax.lang.model.element.Element;
@@ -28,6 +29,7 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.TypeMirror;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -53,7 +55,9 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
     private final List<ProofFailure> failures;
     private final Map<VariableElement, CollectionProof> proofs;
 
-    private Map<Element, CollectionProof> aliases = new LinkedHashMap<Element, CollectionProof>();
+    private Map<Element, Set<CollectionProof>> aliases =
+            new LinkedHashMap<Element, Set<CollectionProof>>();
+    private final Set<Element> uncheckedCollectionAliases = new LinkedHashSet<Element>();
     private Phase phase = Phase.OTHER;
     private ExecutableElement executable;
     private String executableContext = "type body";
@@ -103,26 +107,30 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
     @Override
     public Void visitVariable(VariableTree node, Void unused) {
         Element element = trees.getElement(getCurrentPath());
+        if (node.getInitializer() == null) {
+            recordGenericAliasFlow(element, null);
+        }
         if (isOwnerField(element) && node.getInitializer() != null) {
             final boolean staticField = element.getModifiers().contains(Modifier.STATIC);
             final Phase initializerPhase = staticField
                     ? Phase.STATIC_FIELD_INITIALIZER : Phase.INSTANCE_FIELD_INITIALIZER;
             final String description = (staticField ? "static field initializer " : "field initializer ")
                     + ownerType.getSimpleName() + "." + element.getSimpleName();
-            return withExecutableContext(initializerPhase, null, description, new ScanAction() {
+            Void result = withExecutableContext(initializerPhase, null, description, new ScanAction() {
                 @Override
                 public Void scan() {
                     return CollectionEffectScanner.this.scan(node.getInitializer(), unused);
                 }
             });
+            recordGenericAliasFlow(element, node.getInitializer());
+            recordVariableFlow(element, node.getInitializer(), node);
+            return result;
         }
 
         Void result = super.visitVariable(node, unused);
         if (element != null && node.getInitializer() != null) {
-            CollectionProof proof = referencedProof(node.getInitializer());
-            if (proof != null) {
-                aliases.put(element, proof);
-            }
+            recordGenericAliasFlow(element, node.getInitializer());
+            recordVariableFlow(element, node.getInitializer(), node);
         }
         return result;
     }
@@ -171,8 +179,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
     public Void visitLambdaExpression(LambdaExpressionTree node, Void unused) {
         final String description = "lambda in " + executableContext;
         if (node.getBody() instanceof ExpressionTree) {
-            CollectionProof returned = referencedProof((ExpressionTree) node.getBody());
-            if (returned != null) {
+            for (CollectionProof returned : referencedProofs((ExpressionTree) node.getBody())) {
                 addFailure(
                         DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
                         returned,
@@ -190,12 +197,21 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
 
     @Override
     public Void visitAssignment(AssignmentTree node, Void unused) {
-        CollectionProof proof = referencedProof(node.getExpression());
-        if (proof != null) {
-            Element target = trees.getElement(new TreePath(getCurrentPath(), node.getVariable()));
-            if (isLocalAliasTarget(target)) {
-                aliases.put(target, proof);
+        Set<CollectionProof> referenced = referencedProofs(node.getExpression());
+        Element target = trees.getElement(new TreePath(getCurrentPath(), node.getVariable()));
+        recordGenericAliasFlow(target, node.getExpression());
+        if (isLocalAliasTarget(target)) {
+            if (referenced.isEmpty()) {
+                aliases.remove(target);
             } else {
+                recordAlias(target, node.getExpression(), referenced, node);
+                aliases.put(target, copyProofs(referenced));
+            }
+        } else {
+            for (CollectionProof proof : referenced) {
+                if (proofs.get(target) == proof) {
+                    continue;
+                }
                 addFailure(
                         DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
                         proof,
@@ -209,8 +225,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
     @Override
     public Void visitReturn(ReturnTree node, Void unused) {
         if (node.getExpression() != null) {
-            CollectionProof proof = referencedProof(node.getExpression());
-            if (proof != null) {
+            for (CollectionProof proof : referencedProofs(node.getExpression())) {
                 addFailure(
                         DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
                         proof,
@@ -224,15 +239,26 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
     @Override
     public Void visitMethodInvocation(MethodInvocationTree node, Void unused) {
         ExecutableElement method = executableElement();
-        CollectionProof receiverProof = receiverProof(node.getMethodSelect());
-        CollectionTypeModel.Operation operation = receiverProof == null
+        ExpressionTree receiver = receiverExpression(node.getMethodSelect());
+        Set<CollectionProof> receiverProofs = receiver == null
+                ? new LinkedHashSet<CollectionProof>() : referencedProofs(receiver);
+        CollectionTypeModel.Operation operation = receiverProofs.isEmpty()
                 ? CollectionTypeModel.Operation.UNKNOWN : typeModel.operation(method);
 
-        if (receiverProof != null) {
+        for (CollectionProof receiverProof : receiverProofs) {
+            if (!hasExactCollectionContract(receiver, receiverProof)) {
+                addFailure(
+                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                        receiverProof,
+                        node,
+                        contractFailureReason(receiver,
+                                typeModel.signature(method) + " receiver"));
+            }
             switch (operation) {
                 case READ:
                     break;
                 case MUTATOR:
+                    validateMutationArguments(receiverProof, method, node);
                     recordMutation(receiverProof, method, node);
                     break;
                 case CALLBACK_MUTATOR:
@@ -265,14 +291,16 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
 
         Set<CollectionProof> escapedArguments = new LinkedHashSet<CollectionProof>();
         for (ExpressionTree argument : node.getArguments()) {
-            CollectionProof argumentProof = referencedProof(argument);
-            boolean safelyModeledCollectionArgument = receiverProof != null
+            Set<CollectionProof> argumentProofs = referencedProofs(argument);
+            boolean safelyModeledCollectionArgument = !receiverProofs.isEmpty()
                     && (operation == CollectionTypeModel.Operation.READ
                     || operation == CollectionTypeModel.Operation.MUTATOR);
-            if (argumentProof != null
-                    && argumentProof != receiverProof
-                    && !safelyModeledCollectionArgument) {
-                escapedArguments.add(argumentProof);
+            if (!safelyModeledCollectionArgument) {
+                for (CollectionProof argumentProof : argumentProofs) {
+                    if (!receiverProofs.contains(argumentProof)) {
+                        escapedArguments.add(argumentProof);
+                    }
+                }
             }
         }
         for (CollectionProof escaped : escapedArguments) {
@@ -298,10 +326,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
         }
         Set<CollectionProof> escapedArguments = new LinkedHashSet<CollectionProof>();
         for (ExpressionTree argument : node.getArguments()) {
-            CollectionProof proof = referencedProof(argument);
-            if (proof != null) {
-                escapedArguments.add(proof);
-            }
+            escapedArguments.addAll(referencedProofs(argument));
         }
         for (CollectionProof proof : escapedArguments) {
             addFailure(
@@ -318,10 +343,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
         if (node.getInitializers() != null) {
             Set<CollectionProof> stored = new LinkedHashSet<CollectionProof>();
             for (ExpressionTree initializer : node.getInitializers()) {
-                CollectionProof proof = referencedProof(initializer);
-                if (proof != null) {
-                    stored.add(proof);
-                }
+                stored.addAll(referencedProofs(initializer));
             }
             for (CollectionProof proof : stored) {
                 addFailure(
@@ -336,8 +358,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
 
     @Override
     public Void visitMemberReference(MemberReferenceTree node, Void unused) {
-        CollectionProof proof = referencedProof(node.getQualifierExpression());
-        if (proof != null) {
+        for (CollectionProof proof : referencedProofs(node.getQualifierExpression())) {
             addFailure(
                     DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
                     proof,
@@ -405,29 +426,318 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
                 || phase == Phase.CONSTRUCTOR;
     }
 
-    private CollectionProof receiverProof(ExpressionTree methodSelect) {
+    private ExpressionTree receiverExpression(ExpressionTree methodSelect) {
         if (!(methodSelect instanceof MemberSelectTree)) {
             return null;
         }
-        return referencedProof(((MemberSelectTree) methodSelect).getExpression());
+        return ((MemberSelectTree) methodSelect).getExpression();
     }
 
-    private CollectionProof referencedProof(ExpressionTree expression) {
+    private Set<CollectionProof> referencedProofs(ExpressionTree expression) {
+        LinkedHashSet<CollectionProof> result = new LinkedHashSet<CollectionProof>();
         ExpressionTree unwrapped = unwrap(expression);
         if (unwrapped instanceof ConditionalExpressionTree) {
             ConditionalExpressionTree conditional = (ConditionalExpressionTree) unwrapped;
-            CollectionProof trueProof = referencedProof(conditional.getTrueExpression());
-            return trueProof == null
-                    ? referencedProof(conditional.getFalseExpression()) : trueProof;
+            result.addAll(referencedProofs(conditional.getTrueExpression()));
+            result.addAll(referencedProofs(conditional.getFalseExpression()));
+            return result;
+        }
+        if (isModernSwitchExpression(unwrapped)) {
+            return collectNestedProofs(unwrapped);
         }
         TreePath path = TreePath.getPath(getCurrentPath().getCompilationUnit(), unwrapped);
         if (path == null) {
-            return null;
+            return result;
         }
         Element element = trees.getElement(path);
         CollectionProof proof = element instanceof VariableElement
                 ? proofs.get(element) : null;
-        return proof == null ? aliases.get(element) : proof;
+        if (proof != null) {
+            result.add(proof);
+        } else {
+            Set<CollectionProof> aliased = aliases.get(element);
+            if (aliased != null) {
+                result.addAll(aliased);
+            }
+        }
+        return result;
+    }
+
+    private Set<CollectionProof> collectNestedProofs(ExpressionTree expression) {
+        final LinkedHashSet<CollectionProof> result = new LinkedHashSet<CollectionProof>();
+        TreePath expressionPath = TreePath.getPath(
+                getCurrentPath().getCompilationUnit(), expression);
+        if (expressionPath == null) {
+            return result;
+        }
+        new TreePathScanner<Void, Void>() {
+            @Override
+            public Void visitIdentifier(IdentifierTree node, Void unused) {
+                addElementProofs(trees.getElement(getCurrentPath()), result);
+                return super.visitIdentifier(node, unused);
+            }
+
+            @Override
+            public Void visitMemberSelect(MemberSelectTree node, Void unused) {
+                addElementProofs(trees.getElement(getCurrentPath()), result);
+                return super.visitMemberSelect(node, unused);
+            }
+        }.scan(expressionPath, null);
+        return result;
+    }
+
+    private void addElementProofs(Element element, Set<CollectionProof> target) {
+        CollectionProof proof = element instanceof VariableElement
+                ? proofs.get(element) : null;
+        if (proof != null) {
+            target.add(proof);
+            return;
+        }
+        Set<CollectionProof> aliased = aliases.get(element);
+        if (aliased != null) {
+            target.addAll(aliased);
+        }
+    }
+
+    private void recordVariableFlow(
+            Element target,
+            ExpressionTree initializer,
+            Tree diagnosticTree) {
+        Set<CollectionProof> referenced = referencedProofs(initializer);
+        if (referenced.isEmpty()) {
+            return;
+        }
+        if (isLocalAliasTarget(target)) {
+            recordAlias(target, initializer, referenced, diagnosticTree);
+            aliases.put(target, copyProofs(referenced));
+            return;
+        }
+        for (CollectionProof proof : referenced) {
+            if (proofs.get(target) == proof) {
+                continue;
+            }
+            addFailure(
+                    DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                    proof,
+                    diagnosticTree,
+                    "retained mutable collection alias is stored by a field declaration");
+        }
+    }
+
+    private void recordAlias(
+            Element target,
+            ExpressionTree source,
+            Set<CollectionProof> referenced,
+            Tree diagnosticTree) {
+        for (CollectionProof proof : referenced) {
+            if (!(target instanceof VariableElement)
+                    || !typeModel.hasExactRoleContract(
+                    ((VariableElement) target).asType(), proof)
+                    || !hasExactCollectionContract(source, proof)) {
+                addFailure(
+                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                        proof,
+                        diagnosticTree,
+                        contractFailureReason(source, "collection alias"));
+            }
+        }
+    }
+
+    private boolean hasExactCollectionContract(
+            ExpressionTree expression,
+            CollectionProof proof) {
+        if (expression == null || isModernSwitchFlow(expression)
+                || referencesUncheckedCollectionAlias(expression)
+                || !typeModel.hasExactRoleContract(typeOf(expression), proof)) {
+            return false;
+        }
+        ExpressionTree unwrapped = expression;
+        while (unwrapped instanceof ParenthesizedTree) {
+            unwrapped = ((ParenthesizedTree) unwrapped).getExpression();
+        }
+        if (unwrapped instanceof TypeCastTree) {
+            return hasExactCollectionContract(
+                    ((TypeCastTree) unwrapped).getExpression(), proof);
+        }
+        if (unwrapped instanceof ConditionalExpressionTree) {
+            ConditionalExpressionTree conditional = (ConditionalExpressionTree) unwrapped;
+            return branchContractProven(conditional.getTrueExpression(), proof)
+                    && branchContractProven(conditional.getFalseExpression(), proof);
+        }
+        return true;
+    }
+
+    private void recordGenericAliasFlow(Element target, ExpressionTree source) {
+        if (!(target instanceof VariableElement)
+                || !typeModel.isCollectionLike(((VariableElement) target).asType())) {
+            return;
+        }
+        TypeMirror targetType = ((VariableElement) target).asType();
+        boolean proven = source == null
+                ? typeModel.hasCompleteRoleContract(targetType)
+                : hasExactGenericFlow(source, targetType)
+                && !referencesUncheckedCollectionAlias(source);
+        if (!proven) {
+            uncheckedCollectionAliases.add(target);
+        }
+    }
+
+    private boolean hasExactGenericFlow(
+            ExpressionTree expression,
+            TypeMirror retainedContract) {
+        if (expression == null || isModernSwitchFlow(expression)) {
+            return false;
+        }
+        TypeMirror expressionType = typeOf(expression);
+        if (expressionType != null && expressionType.getKind() == javax.lang.model.type.TypeKind.NULL) {
+            return true;
+        }
+        if (!typeModel.hasExactRoleContract(expressionType, retainedContract)) {
+            return false;
+        }
+        ExpressionTree unwrapped = expression;
+        while (unwrapped instanceof ParenthesizedTree) {
+            unwrapped = ((ParenthesizedTree) unwrapped).getExpression();
+        }
+        if (unwrapped instanceof TypeCastTree) {
+            return hasExactGenericFlow(
+                    ((TypeCastTree) unwrapped).getExpression(), retainedContract);
+        }
+        if (unwrapped instanceof ConditionalExpressionTree) {
+            ConditionalExpressionTree conditional = (ConditionalExpressionTree) unwrapped;
+            return hasExactGenericFlow(conditional.getTrueExpression(), retainedContract)
+                    && hasExactGenericFlow(conditional.getFalseExpression(), retainedContract);
+        }
+        return true;
+    }
+
+    private boolean referencesUncheckedCollectionAlias(ExpressionTree expression) {
+        ExpressionTree unwrapped = unwrap(expression);
+        if (unwrapped instanceof ConditionalExpressionTree) {
+            ConditionalExpressionTree conditional = (ConditionalExpressionTree) unwrapped;
+            return referencesUncheckedCollectionAlias(conditional.getTrueExpression())
+                    || referencesUncheckedCollectionAlias(conditional.getFalseExpression());
+        }
+        if (isModernSwitchExpression(unwrapped)) {
+            final boolean[] found = new boolean[1];
+            TreePath expressionPath = TreePath.getPath(
+                    getCurrentPath().getCompilationUnit(), unwrapped);
+            if (expressionPath != null) {
+                new TreePathScanner<Void, Void>() {
+                    @Override
+                    public Void visitIdentifier(IdentifierTree node, Void unused) {
+                        if (uncheckedCollectionAliases.contains(
+                                trees.getElement(getCurrentPath()))) {
+                            found[0] = true;
+                        }
+                        return found[0] ? null : super.visitIdentifier(node, unused);
+                    }
+
+                    @Override
+                    public Void visitMemberSelect(MemberSelectTree node, Void unused) {
+                        if (uncheckedCollectionAliases.contains(
+                                trees.getElement(getCurrentPath()))) {
+                            found[0] = true;
+                        }
+                        return found[0] ? null : super.visitMemberSelect(node, unused);
+                    }
+                }.scan(expressionPath, null);
+            }
+            return found[0];
+        }
+        TreePath path = TreePath.getPath(getCurrentPath().getCompilationUnit(), unwrapped);
+        return path != null && uncheckedCollectionAliases.contains(trees.getElement(path));
+    }
+
+    private boolean branchContractProven(
+            ExpressionTree expression,
+            CollectionProof proof) {
+        return !referencedProofs(expression).contains(proof)
+                || hasExactCollectionContract(expression, proof);
+    }
+
+    private String contractFailureReason(ExpressionTree expression, String subject) {
+        if (isModernSwitchFlow(expression)) {
+            return subject + " uses a switch-expression collection flow whose possible results "
+                    + "cannot be proven by the Java 8-compatible analysis";
+        }
+        return subject + " loses the retained collection's exact generic element/key/value contract "
+                + "through a raw or unchecked type";
+    }
+
+    private void validateMutationArguments(
+            CollectionProof proof,
+            ExecutableElement method,
+            MethodInvocationTree invocation) {
+        List<CollectionTypeModel.MutationArgumentRole> roles =
+                typeModel.mutationArgumentRoles(method);
+        for (int index = 0; index < roles.size(); index++) {
+            CollectionTypeModel.MutationArgumentRole role = roles.get(index);
+            if (role == CollectionTypeModel.MutationArgumentRole.NONE) {
+                continue;
+            }
+            ExpressionTree argument = invocation.getArguments().get(index);
+            if (role == CollectionTypeModel.MutationArgumentRole.ELEMENT_SOURCE
+                    || role == CollectionTypeModel.MutationArgumentRole.MAP_SOURCE) {
+                if (!hasExactCollectionContract(argument, proof)) {
+                    addFailure(
+                            DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                            proof,
+                            invocation,
+                            typeModel.signature(method) + " source loses the retained collection's "
+                                    + "exact generic element/key/value contract");
+                }
+                continue;
+            }
+
+            int retainedRoleIndex = role == CollectionTypeModel.MutationArgumentRole.VALUE ? 1 : 0;
+            TypeMirror argumentType = typeOf(argument);
+            if (!typeModel.isCompatibleItem(argumentType, proof, retainedRoleIndex)) {
+                String roleName = role == CollectionTypeModel.MutationArgumentRole.ELEMENT
+                        ? "element" : role.name().toLowerCase();
+                addFailure(
+                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                        proof,
+                        invocation,
+                        typeModel.signature(method) + " argument for the " + roleName
+                                + " role has type " + String.valueOf(argumentType)
+                                + "; it is not proven compatible with retained role "
+                                + typeModel.retainedRole(proof, retainedRoleIndex));
+            }
+        }
+    }
+
+    private TypeMirror typeOf(ExpressionTree expression) {
+        TreePath path = TreePath.getPath(
+                getCurrentPath().getCompilationUnit(), expression);
+        return path == null ? null : trees.getTypeMirror(path);
+    }
+
+    private boolean isModernSwitchFlow(Tree tree) {
+        final boolean[] found = new boolean[1];
+        new TreeScanner<Void, Void>() {
+            @Override
+            public Void scan(Tree candidate, Void unused) {
+                if (candidate == null || found[0]) {
+                    return null;
+                }
+                if (isModernSwitchExpression(candidate)
+                        || "YIELD".equals(candidate.getKind().name())) {
+                    found[0] = true;
+                    return null;
+                }
+                return super.scan(candidate, unused);
+            }
+        }.scan(tree, null);
+        return found[0];
+    }
+
+    private static boolean isModernSwitchExpression(Tree tree) {
+        return tree != null && "SWITCH_EXPRESSION".equals(tree.getKind().name());
+    }
+
+    private static Set<CollectionProof> copyProofs(Set<CollectionProof> proofs) {
+        return new LinkedHashSet<CollectionProof>(proofs);
     }
 
     private ExecutableElement executableElement() {
@@ -497,11 +807,11 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
         Phase previousPhase = phase;
         ExecutableElement previousExecutable = executable;
         String previousDescription = executableContext;
-        Map<Element, CollectionProof> previousAliases = aliases;
+        Map<Element, Set<CollectionProof>> previousAliases = aliases;
         phase = nextPhase;
         executable = nextExecutable;
         executableContext = nextDescription;
-        aliases = new LinkedHashMap<Element, CollectionProof>(previousAliases);
+        aliases = new LinkedHashMap<Element, Set<CollectionProof>>(previousAliases);
         try {
             return action.scan();
         } finally {

@@ -182,7 +182,8 @@ The retained container must come directly from exactly one fresh allocation of
 allocation may occur in an instance field initializer, instance initializer,
 or constructor for instance state, or in a static field initializer or static
 initializer for class state. A supported copy constructor creates a fresh
-container, so this establishes ownership:
+container, so this establishes ownership when its source preserves the exact
+proved element or map key/value contract:
 
 ```java
 import io.github.jutil.immutability.Immutable;
@@ -215,10 +216,14 @@ Supported non-callback structural mutators include the ordinary `add`,
 `addAll`, `remove`, `removeAll`, `retainAll`, `clear`, indexed list mutation,
 and map `put`, removal, and replacement signatures. They are allowed only when
 the container is already owned and execution is still within its applicable
-instance-construction or class-initialization phase. The same calls produce
-`IC006` after freeze, including calls through a simple local alias. Callback
-mutators such as `removeIf`, `replaceAll`, `compute*`, and `merge` fail closed
-with `IC005` because callback effects and escapes are not modeled yet.
+instance-construction or class-initialization phase. Inserted and replacement
+arguments, `addAll` sources, and `putAll` sources must preserve the proved
+element, key, and value roles. Raw receivers, raw copy or bulk sources, and
+unchecked collection aliases fail with `IC005`; correctness does not depend on
+client warning settings. The same mutator calls produce `IC006` after freeze,
+including calls through a simple local alias. Callback mutators such as
+`removeIf`, `replaceAll`, `compute*`, and `merge` fail closed with `IC005`
+because callback effects and escapes are not modeled yet.
 
 The explicit read model includes `size`, `isEmpty`, containment checks, indexed
 list lookup, and direct map lookup. Returning an element from `List.get` or a
@@ -232,7 +237,11 @@ it through a non-private final collection field produce `IC005`. Iterator,
 list-iterator, sublist, map-view, stream, parallel-stream, and spliterator
 creation also fails closed because those objects may alias retained state. This
 is collection-specific alias and escape analysis, not a claim of general
-interprocedural escape analysis.
+interprocedural escape analysis. Field-declaration storage is checked throughout
+the containing nest, including nested, local, and anonymous classes. Conditional
+expressions retain every possible collection target in deterministic branch
+order; an operation must be legal for all of them. Collection reference flows
+through modern switch expressions and `yield` fail closed on capable compilers.
 
 ### Fail-closed limitations
 
@@ -246,7 +255,8 @@ fails with `IC005`; an unavailable non-`Object` superclass fails with `IC003`.
 Collection support is intentionally bounded. Queues, deques, sorted,
 concurrent, weak, identity, custom, and third-party collection implementations
 are unsupported. So are raw collections, wildcard or unresolved type-variable
-arguments, collections nested directly inside collections, factory and helper
+arguments, raw or unchecked collection flows, collections nested directly
+inside collections, factory and helper
 origins, conditional or competing origins, field-to-field ownership,
 unmodifiable wrappers, builders, deserialization, and arbitrary
 interprocedural alias analysis. A `final` field modifier, an unmodifiable-looking
