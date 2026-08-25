@@ -232,6 +232,9 @@ Current release claims are intentionally limited to the 0.1.0 proof domain
 documented here and in the `@Immutable` Javadocs, changelog, release notes, and
 compiler diagnostics.
 
+Maintainers preparing both release artifacts should follow
+[RELEASING.md](RELEASING.md).
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).

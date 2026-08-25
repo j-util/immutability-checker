@@ -54,6 +54,142 @@
 
     <profiles>
         <profile>
+            <id>local-central-bundle</id>
+            <activation>
+                <property>
+                    <name>central.skipPublishing</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>create-local-central-bundle</id>
+                                <phase>deploy</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <property name="bundle.staging"
+                                                  value="${project.build.directory}/central-staging"/>
+                                        <property name="bundle.output"
+                                                  value="${project.build.directory}/central-publishing"/>
+                                        <property name="api.bundle.directory"
+                                                  value="${bundle.staging}/io/github/j-util/immutability-checker/${project.version}"/>
+                                        <property name="processor.bundle.directory"
+                                                  value="${bundle.staging}/io/github/j-util/immutability-checker-processor/${project.version}"/>
+                                        <delete dir="${bundle.staging}"/>
+                                        <delete dir="${bundle.output}"/>
+                                        <mkdir dir="${api.bundle.directory}"/>
+                                        <mkdir dir="${processor.bundle.directory}"/>
+                                        <mkdir dir="${bundle.output}"/>
+                                        <copy file="${project.basedir}/immutability-checker/pom.xml"
+                                              tofile="${api.bundle.directory}/immutability-checker-${project.version}.pom"/>
+                                        <copy todir="${api.bundle.directory}">
+                                            <fileset dir="${project.basedir}/immutability-checker/target">
+                                                <include name="immutability-checker-${project.version}.jar"/>
+                                                <include name="immutability-checker-${project.version}-sources.jar"/>
+                                                <include name="immutability-checker-${project.version}-javadoc.jar"/>
+                                                <include name="immutability-checker-${project.version}.pom.asc"/>
+                                                <include name="immutability-checker-${project.version}.jar.asc"/>
+                                                <include name="immutability-checker-${project.version}-sources.jar.asc"/>
+                                                <include name="immutability-checker-${project.version}-javadoc.jar.asc"/>
+                                            </fileset>
+                                        </copy>
+                                        <copy file="${project.basedir}/immutability-checker-processor/pom.xml"
+                                              tofile="${processor.bundle.directory}/immutability-checker-processor-${project.version}.pom"/>
+                                        <copy todir="${processor.bundle.directory}">
+                                            <fileset dir="${project.basedir}/immutability-checker-processor/target">
+                                                <include name="immutability-checker-processor-${project.version}.jar"/>
+                                                <include name="immutability-checker-processor-${project.version}-sources.jar"/>
+                                                <include name="immutability-checker-processor-${project.version}-javadoc.jar"/>
+                                                <include name="immutability-checker-processor-${project.version}.pom.asc"/>
+                                                <include name="immutability-checker-processor-${project.version}.jar.asc"/>
+                                                <include name="immutability-checker-processor-${project.version}-sources.jar.asc"/>
+                                                <include name="immutability-checker-processor-${project.version}-javadoc.jar.asc"/>
+                                            </fileset>
+                                        </copy>
+                                        <condition property="bundle.artifacts.complete">
+                                            <and>
+                                                <available file="${api.bundle.directory}/immutability-checker-${project.version}.pom"/>
+                                                <available file="${api.bundle.directory}/immutability-checker-${project.version}.jar"/>
+                                                <available file="${api.bundle.directory}/immutability-checker-${project.version}-sources.jar"/>
+                                                <available file="${api.bundle.directory}/immutability-checker-${project.version}-javadoc.jar"/>
+                                                <available file="${processor.bundle.directory}/immutability-checker-processor-${project.version}.pom"/>
+                                                <available file="${processor.bundle.directory}/immutability-checker-processor-${project.version}.jar"/>
+                                                <available file="${processor.bundle.directory}/immutability-checker-processor-${project.version}-sources.jar"/>
+                                                <available file="${processor.bundle.directory}/immutability-checker-processor-${project.version}-javadoc.jar"/>
+                                            </and>
+                                        </condition>
+                                        <fail unless="bundle.artifacts.complete"
+                                              message="Local Central bundle is missing a required POM or JAR."/>
+                                        <condition property="bundle.signatures.complete">
+                                            <or>
+                                                <equals arg1="${gpg.skip}" arg2="true"/>
+                                                <and>
+                                                    <available file="${api.bundle.directory}/immutability-checker-${project.version}.pom.asc"/>
+                                                    <available file="${api.bundle.directory}/immutability-checker-${project.version}.jar.asc"/>
+                                                    <available file="${api.bundle.directory}/immutability-checker-${project.version}-sources.jar.asc"/>
+                                                    <available file="${api.bundle.directory}/immutability-checker-${project.version}-javadoc.jar.asc"/>
+                                                    <available file="${processor.bundle.directory}/immutability-checker-processor-${project.version}.pom.asc"/>
+                                                    <available file="${processor.bundle.directory}/immutability-checker-processor-${project.version}.jar.asc"/>
+                                                    <available file="${processor.bundle.directory}/immutability-checker-processor-${project.version}-sources.jar.asc"/>
+                                                    <available file="${processor.bundle.directory}/immutability-checker-processor-${project.version}-javadoc.jar.asc"/>
+                                                </and>
+                                            </or>
+                                        </condition>
+                                        <fail unless="bundle.signatures.complete"
+                                              message="Signed local Central bundle is missing a required signature."/>
+                                        <condition property="bundle.aggregator.excluded">
+                                            <not>
+                                                <available file="${bundle.staging}/io/github/j-util/immutability-checker-build"/>
+                                            </not>
+                                        </condition>
+                                        <fail unless="bundle.aggregator.excluded"
+                                              message="The unpublished aggregator must not be in the Central bundle."/>
+                                        <checksum algorithm="MD5" fileext=".md5">
+                                            <fileset dir="${bundle.staging}">
+                                                <exclude name="**/*.asc"/>
+                                            </fileset>
+                                        </checksum>
+                                        <checksum algorithm="SHA-1" fileext=".sha1">
+                                            <fileset dir="${bundle.staging}">
+                                                <exclude name="**/*.asc"/>
+                                                <exclude name="**/*.md5"/>
+                                            </fileset>
+                                        </checksum>
+                                        <checksum algorithm="SHA-256" fileext=".sha256">
+                                            <fileset dir="${bundle.staging}">
+                                                <exclude name="**/*.asc"/>
+                                                <exclude name="**/*.md5"/>
+                                                <exclude name="**/*.sha1"/>
+                                            </fileset>
+                                        </checksum>
+                                        <checksum algorithm="SHA-512" fileext=".sha512">
+                                            <fileset dir="${bundle.staging}">
+                                                <exclude name="**/*.asc"/>
+                                                <exclude name="**/*.md5"/>
+                                                <exclude name="**/*.sha1"/>
+                                                <exclude name="**/*.sha256"/>
+                                            </fileset>
+                                        </checksum>
+                                        <zip destfile="${bundle.output}/central-bundle.zip"
+                                             basedir="${bundle.staging}"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <id>central-publish</id>
             <build>
                 <plugins>
