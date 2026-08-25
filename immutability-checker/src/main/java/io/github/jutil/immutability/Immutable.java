@@ -15,6 +15,11 @@ import java.lang.annotation.Target;
  * the immutability processor must run and complete successfully. Verification
  * fails closed when the processor cannot prove a state or behavior safe.</p>
  *
+ * <p>This annotation API does not bundle or discover the checker by itself.
+ * Configure the matching {@code immutability-checker-processor} artifact on
+ * the compiler's annotation-processor path. The annotation API and processor
+ * versions must match.</p>
+ *
  * <p>Version 0.1 is a technical preview for ordinary top-level and static
  * member classes. Its proof is sound only within the explicitly supported
  * domain described below; it is not the full intended 1.0.0 feature set.</p>

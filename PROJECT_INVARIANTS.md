@@ -1,187 +1,469 @@
-## Immutability Checker — Project Invariants
+# Immutability Checker — Project Invariants
 
-> **MUST READ — READ-ONLY FOR AI AGENTS**
+> **INTERNAL DEVELOPMENT GUARD — MUST READ — READ-ONLY FOR AI AGENTS**
 >
-> This file defines the normative semantic contract of the project.
+> This file defines the normative engineering and semantic constraints of the
+> `immutability-checker` project.
 >
-> Every AI agent working on this repository **MUST read this file completely before modifying code, tests, documentation, build configuration, diagnostics, or public API**.
+> Every AI agent working on this repository **MUST read this file completely
+> before modifying code, tests, documentation, diagnostics, build configuration,
+> packaging, publication configuration, or public API**.
 >
-> **AI agents MUST NOT modify, rewrite, reorganize, delete, weaken, or “improve” this file.**
+> **AI agents MUST NOT modify, rewrite, reorganize, delete, weaken, or
+> “improve” this file.**
 >
-> `PROJECT_INVARIANTS.md` is read-only for AI agents. Only the human maintainer may change it.
+> `PROJECT_INVARIANTS.md` is read-only for AI agents. Only the human maintainer
+> may change it.
 >
-> If an AI agent believes that an invariant is incorrect, ambiguous, incomplete, or incompatible with a requested change, it must report the conflict instead of editing this file.
+> If an AI agent believes an invariant is incorrect, ambiguous, incomplete, or
+> incompatible with a requested change, it must report the exact conflict
+> instead of editing this file.
 >
-> If implementation, tests, documentation, issues, comments, or existing behavior conflict with this file, **this file wins**.
+> If implementation, tests, documentation, issues, comments, generated
+> artifacts, or existing behavior conflict with this file, **this file wins**.
 
 ---
 
-## 1. Project Purpose
+## 1. Status and Audience
+
+This file is an internal development guard.
+
+It is not:
+
+- consumer documentation;
+- supported public API;
+- a runtime contract file;
+- a Maven artifact;
+- a file that consumers must read;
+- a replacement for the README or Javadocs.
+
+The public consumer contract is communicated through:
+
+- `README.md`;
+- the Javadocs of `@Immutable`;
+- `CHANGELOG.md`;
+- release notes;
+- Maven metadata;
+- compiler diagnostics.
+
+Those public materials must accurately reflect the implementation and must not
+contradict this file.
+
+Because the repository is public, repository visitors may read this file.
+Visibility in the source repository does not make it supported consumer API.
+
+This file must remain at the repository root and must not be packaged in:
+
+- the annotation API JAR;
+- the processor JAR;
+- either source JAR;
+- either Javadoc JAR;
+- generated Maven metadata.
+
+The README does not need to direct ordinary consumers to this file.
+
+---
+
+## 2. Project Identity
 
 `immutability-checker` is a compile-time Java static-analysis library.
 
-Its primary annotation is:
+Its consumer-facing annotation is:
 
 ```java
 @Immutable
 ```
 
-The annotation requests verification that the annotated ordinary Java class satisfies this project’s immutability contract.
+The annotation requests verification that a supported Java type satisfies this
+project’s immutability contract.
 
-The annotation is a request for proof. Its presence is not proof by itself.
+The annotation does not make a type immutable by declaration.
 
-A type is considered verified only when:
+A type is verified only when:
 
-1. the checker has actually run;
-2. the analysis has completed successfully;
+1. the processor has actually run;
+2. all required analysis has completed;
 3. no relevant state or behavior remains unproven;
-4. compilation has completed without an immutability diagnostic.
+4. compilation has completed without an immutability error.
 
-The checker must either:
+The checker must produce one of two semantic outcomes:
 
 ```text
-prove
+proved immutable within the supported analysis model
 ```
 
 or:
 
 ```text
-reject
+rejected because immutability was violated or could not be proven
 ```
 
-There is no intermediate result such as:
+There is no successful intermediate result such as:
 
 ```text
 probably immutable
 ```
 
----
+The defining principle is:
 
-## 2. Product Scope by Major Version
-
-### V1: ordinary Java classes
-
-V1 targets ordinary Java classes.
-
-The V1 proof domain includes:
-
-* instance state;
-* declared static class state;
-* recursively reachable custom objects;
-* recursively reachable static objects;
-* source superclasses;
-* ownership;
-* aliases;
-* escapes;
-* method effects;
-* constructor and class-initializer reachability;
-* supported containers and arrays;
-* supported cross-module verification metadata;
-* conservative polymorphic analysis.
-
-V1 must not be released while its public documentation claims broader behavior than the implementation actually provides.
-
-### V2: Java records
-
-Records are intentionally deferred to V2.
-
-An annotated record must fail with a clear unsupported-type diagnostic until record-specific verification is implemented.
-
-Record support must account for:
-
-* canonical constructors;
-* compact constructors;
-* generated component fields;
-* generated component accessors;
-* overridden accessors;
-* automatic exposure of component references;
-* record-specific ownership and escape behavior.
-
-Adding records in V2 must not weaken the ordinary-class guarantee established by V1.
+> Do not infer immutability from how a type looks. Prove that its verified state
+> cannot legally mutate after its applicable freeze boundary.
 
 ---
 
-## 3. Verified State
+## 3. Artifact Architecture
 
-For this project, verified state consists of two categories:
+The project uses an unpublished build aggregator and two published artifacts.
 
-```text
-instance state
-+
-class state
-```
-
-### 3.1 Instance state
-
-Instance state consists of:
-
-* every non-static field of the verified object;
-* every object, array, container, element, key, value, or other state reachable from those fields;
-* inherited instance state;
-* state retained through aliases that participate in the object’s logical state.
-
-### 3.2 Class state
-
-Class state consists of:
-
-* every declared static field of the verified class;
-* every object, array, container, element, key, value, or other state reachable from those static fields;
-* declared static state of recursively analyzed source classes;
-* declared static state of recursively analyzed source superclasses.
-
-Static fields are shared across instances, but they are still part of the verified type’s state under this project’s contract.
-
-Therefore:
+### 3.1 Build aggregator
 
 ```text
-@Immutable
+io.github.j-util:immutability-checker-build
 ```
 
-does not mean only:
+The build aggregator:
+
+- has `pom` packaging;
+- builds the complete reactor;
+- is not a consumer dependency;
+- must not be published as a normal Maven Central artifact;
+- must not be required as a parent POM by independently published modules.
+
+### 3.2 Annotation API artifact
 
 ```text
-instances cannot change
+io.github.j-util:immutability-checker
 ```
 
-It also means:
+This artifact is the annotation API.
+
+Its supported Java API consists only of:
+
+```java
+io.github.jutil.immutability.Immutable
+```
+
+The API JAR must contain:
 
 ```text
-the verified class-state graph cannot change after class initialization
+io/github/jutil/immutability/Immutable.class
+META-INF/LICENSE
+standard Maven metadata
+manifest metadata
 ```
 
-### 3.3 Proof graph
+It must not contain:
 
-The complete proof graph may contain:
+- the annotation processor;
+- internal analysis classes;
+- processor service registration;
+- `com.sun.source` integration;
+- `tools.jar` configuration;
+- runtime implementation code;
+- `AGENTS.md`;
+- `PROJECT_INVARIANTS.md`.
 
-* instance-field edges;
-* static-field edges;
-* superclass edges;
-* array-element edges;
-* collection-element edges;
-* map-key edges;
-* map-value edges;
-* ownership edges;
-* alias edges;
-* call edges;
-* escape edges.
+Its automatic module name is:
 
-The graph may contain cycles.
+```text
+io.github.jutil.immutability
+```
 
-It is not necessarily a tree.
+### 3.3 Processor artifact
+
+```text
+io.github.j-util:immutability-checker-processor
+```
+
+This artifact is the compile-time analysis engine.
+
+It contains:
+
+- the JSR 269 processor service provider;
+- recursive proof logic;
+- field-write analysis;
+- ownership analysis;
+- alias and escape analysis;
+- collection and array semantic models;
+- record analysis;
+- diagnostics;
+- other internal compiler integration.
+
+It must contain:
+
+```text
+META-INF/services/javax.annotation.processing.Processor
+```
+
+The provider must be:
+
+```text
+io.github.jutil.immutability.internal.processor.ImmutableProcessor
+```
+
+The processor artifact must not contain a duplicate copy of:
+
+```text
+io/github/jutil/immutability/Immutable.class
+```
+
+Its automatic module name is:
+
+```text
+io.github.jutil.immutability.processor
+```
+
+Everything under:
+
+```text
+io.github.jutil.immutability.internal
+```
+
+is unsupported implementation detail, even when Java service loading requires a
+class to be technically public.
+
+### 3.4 Dependency direction
+
+The required conceptual dependency direction is:
+
+```text
+consumer source
+    -> annotation API
+
+compiler annotation-processor path
+    -> processor
+```
+
+The annotation API must never depend on the processor.
+
+The processor may use the annotation API as a build or test dependency where
+needed, but must not create a runtime dependency for consumer applications.
+
+### 3.5 Consumer setup
+
+Maven consumers use:
+
+```text
+immutability-checker
+    -> provided or compile-only annotation API
+
+immutability-checker-processor
+    -> annotation processor path
+```
+
+Gradle consumers use:
+
+```text
+compileOnly
+    -> immutability-checker
+
+annotationProcessor
+    -> immutability-checker-processor
+```
+
+Neither artifact is intended to be an application runtime dependency.
+
+Annotation presence without processor execution is not verification.
+
+### 3.6 Version alignment
+
+The API and processor artifacts must use the same release version.
+
+Documentation must show matching versions.
+
+The project must not silently support mixed versions unless an explicit
+compatibility policy is later defined.
 
 ---
 
-## 4. Core Immutability Contract
+## 4. Java Compatibility
 
-A successful verification proves:
+The published artifacts must remain Java 8 class-file compatible unless the
+human maintainer explicitly changes the minimum Java version.
 
-> After the applicable initialization boundary has completed successfully, no legal ordinary-Java execution path within the supported analysis model can mutate the verified state graph.
+The class-file major version must remain:
 
-The checker verifies **mutation possibility**, not merely mutation currently observed in the repository.
+```text
+52
+```
 
-This means that a mutation path is invalid even when no current caller uses it.
+The same processor artifact must:
 
-For example:
+```text
+run on Java 8
+    -> verify supported ordinary Java classes
+    -> leave record-specific logic dormant
+
+run on a record-capable JDK
+    -> verify supported ordinary Java classes
+    -> verify supported Java records
+```
+
+Record support must not require a separate artifact.
+
+Java 8-compatible classes must not link directly to compiler model or tree APIs
+that do not exist on Java 8, including direct references to types or constants
+such as:
+
+```text
+RecordComponentElement
+TypeElement.getRecordComponents()
+ElementKind.RECORD
+ElementKind.RECORD_COMPONENT
+BindingPatternTree
+SwitchExpressionTree
+```
+
+Newer language features may be detected through Java 8-compatible techniques,
+including:
+
+- tree or element kind names;
+- ordinary Java 8 model interfaces;
+- guarded reflection;
+- isolated capability adapters.
+
+The processor may use supported compiler-tree APIs:
+
+```text
+javax.annotation.processing
+javax.lang.model
+javax.tools
+com.sun.source.tree
+com.sun.source.util
+```
+
+It must not require consumers to export non-public `com.sun.tools.javac`
+packages.
+
+JDK 8 `tools.jar` support is a processor-build concern only.
+
+`tools.jar` must never be:
+
+- packaged;
+- exposed by the annotation API;
+- a runtime dependency;
+- transitive to consumers.
+
+---
+
+## 5. Public API Discipline
+
+The primary and only supported Java API is:
+
+```java
+@Documented
+@Retention(RetentionPolicy.SOURCE)
+@Target(ElementType.TYPE)
+public @interface Immutable {
+}
+```
+
+The annotation must remain:
+
+- source-retained;
+- type-targeted;
+- non-inherited;
+- free of runtime behavior;
+- free of configuration properties unless a reviewed semantic necessity arises.
+
+Do not add merely for convenience:
+
+- `@Mutable`;
+- ignore annotations;
+- suppression annotations;
+- trust annotations;
+- ownership annotations;
+- runtime enforcement APIs;
+- configuration attributes on `@Immutable`.
+
+A public escape hatch must never silently weaken the meaning of successful
+verification.
+
+Diagnostics should explain proof failures. Annotation properties should not be
+used as substitutes for sound analysis.
+
+---
+
+## 6. Version and Release Scope
+
+### 6.1 Technical-preview releases
+
+Versions below `1.0.0` may expose a deliberately limited proof capability.
+
+A technical preview may reject source that the intended final semantic model
+would consider immutable.
+
+Technical previews must:
+
+- fail closed;
+- document their implemented proof domain;
+- document current limitations;
+- avoid claiming the complete `1.0.0` feature set;
+- preserve the meaning of successful verification.
+
+### 6.2 V1 target
+
+The intended `1.0.0` product covers:
+
+- ordinary Java classes;
+- Java records on record-capable compilers;
+- instance state;
+- declared static class state;
+- record components;
+- recursively reachable custom objects;
+- supported arrays;
+- supported collections and maps;
+- nested supported containers;
+- ownership;
+- aliases;
+- escapes;
+- method effects;
+- constructor and class-initializer reachability;
+- inheritance;
+- conservative polymorphism;
+- supported cross-module proof metadata.
+
+V1 does not need to support every JDK or third-party container implementation.
+
+Every supported type family and operation must have explicit deterministic
+semantics.
+
+Unsupported state or behavior must fail closed.
+
+### 6.3 Evolution rule
+
+Analysis precision may improve.
+
+A later release may prove source that an earlier release rejected.
+
+A later release must not make successful `@Immutable` verification mean less.
+
+The invariant is:
+
+```text
+the set of provable programs may grow
+```
+
+while:
+
+```text
+the immutability guarantee must not weaken
+```
+
+---
+
+## 7. Core Immutability Contract
+
+Successful verification proves:
+
+> After the applicable initialization boundary has completed successfully, no
+> legal execution path within the supported ordinary-Java analysis model can
+> mutate the verified state graph.
+
+The checker verifies **mutation possibility**, not only mutation currently
+observed in the repository.
+
+This fails even when no existing caller invokes it:
 
 ```java
 void rename(String name) {
@@ -189,11 +471,9 @@ void rename(String name) {
 }
 ```
 
-violates immutability even when `rename()` is never called anywhere in the current codebase.
+The method creates a legal future mutation path.
 
-The method creates a legal post-construction mutation path for present or future callers.
-
-Similarly:
+This may also fail even when no current caller mutates the returned value:
 
 ```java
 List<String> values() {
@@ -201,30 +481,153 @@ List<String> values() {
 }
 ```
 
-may violate immutability even when no current code mutates the returned list.
+The returned alias creates legal future mutation capability.
 
-The returned reference exposes future mutation capability.
+The checker must not certify a type merely because current usage happens to be
+safe.
 
-The checker must not certify code merely because current usage happens to be safe.
+The proof is open-world at externally callable boundaries.
 
 ---
 
-## 5. Freeze Boundaries
+## 8. Verified State
 
-There are two distinct freeze boundaries.
+Verified state consists of:
 
-### 5.1 Instance freeze boundary
+```text
+instance state
++
+declared class state
+```
 
-Instance state is frozen after successful completion of construction of the verified object.
+### 8.1 Instance state
+
+Instance state includes:
+
+- every non-static field of an ordinary verified object;
+- every component of a verified record;
+- inherited instance state;
+- every supported object reachable from those roots;
+- arrays and array elements;
+- collection containers and elements;
+- map containers, keys, and values;
+- nested views or wrappers when supported;
+- aliases participating in the retained object graph.
+
+### 8.2 Class state
+
+Class state includes:
+
+- every static field declared by the annotated root;
+- every static field declared by a recursively participating class or record;
+- static fields inherited through a participating source superclass;
+- every supported object reachable from those static fields;
+- static arrays;
+- static containers;
+- static keys, values, and elements.
+
+Static fields are shared by every instance, but they are verified state under
+this project’s contract.
+
+Therefore:
+
+```text
+@Immutable
+```
+
+means both:
+
+```text
+verified instances cannot legally mutate after construction
+```
+
+and:
+
+```text
+verified declared class state cannot legally mutate after class initialization
+```
+
+### 8.3 Proof graph
+
+The verified state graph may include:
+
+- ordinary field edges;
+- static field edges;
+- record component edges;
+- superclass edges;
+- array-element edges;
+- collection-element edges;
+- map-key edges;
+- map-value edges;
+- ownership edges;
+- alias edges;
+- call edges;
+- escape edges.
+
+The graph may contain cycles.
+
+It is not necessarily a tree.
+
+---
+
+## 9. Scope of Static-State Analysis
+
+Every declared static field of every type participating in the recursive proof
+must be considered.
+
+Static state must not be ignored merely because the root reaches the declaring
+type through an instance field or record component.
+
+Example:
+
+```java
+final class Address {
+    private static int revision;
+
+    static void revise() {
+        revision++;
+    }
+}
+
+@Immutable
+final class Person {
+    private Address address;
+}
+```
+
+`Person` must fail because recursive verification of `Address` includes
+`Address.revision`.
+
+The checker does not automatically verify every unrelated static field in the
+entire application.
+
+Unrelated global state enters the proof when it:
+
+- is declared by a participating type;
+- becomes reachable from verified state;
+- aliases verified state;
+- otherwise affects the verified state graph under a supported analysis rule.
+
+The checker verifies the participating graph, not the entire JVM.
+
+---
+
+## 10. Freeze Boundaries
+
+There are two principal freeze boundaries.
+
+### 10.1 Instance freeze boundary
+
+Instance state freezes after successful completion of construction.
 
 Conceptually:
 
 ```text
-instance allocation
+allocation
     ↓
-field initialization
+instance field initialization
     ↓
-instance initializers
+instance initializer blocks
     ↓
 constructor chain
     ↓
@@ -233,13 +636,11 @@ successful construction completion
 INSTANCE STATE FROZEN
 ```
 
-Mutation required to construct the instance may be valid before this boundary.
+Mutation required to construct the object may be valid before this boundary.
 
-If construction throws, no successfully verified instance has been produced.
+### 10.2 Class-state freeze boundary
 
-### 5.2 Class-state freeze boundary
-
-Declared static class state is frozen after successful completion of class initialization.
+Declared class state freezes after successful class initialization.
 
 Conceptually:
 
@@ -257,94 +658,72 @@ CLASS STATE FROZEN
 
 Mutation required to construct class state may be valid before this boundary.
 
-If class initialization fails, no successfully initialized class state has been produced.
+### 10.3 Owned aggregate construction
 
-### 5.3 Owned aggregate construction
+A freshly allocated nested object, array, or container may remain mutable while
+it is exclusively owned by a still-active construction context.
 
-A freshly allocated object that becomes exclusively owned by an instance-construction or class-initialization context may remain mutable until the owning aggregate’s freeze boundary.
-
-For example:
+Example:
 
 ```java
-private static final List<String> VALUES;
+private List<String> values = new ArrayList<>();
 
-static {
-    VALUES = new ArrayList<>();
-    VALUES.add("A");
-    VALUES.add("B");
+Names() {
+    values.add("A");
+    values.add("B");
 }
 ```
 
-may eventually be valid if the checker proves that:
+The list may be mutated while the owning aggregate is under construction if
+exclusive ownership and non-escape are proven.
 
-* the list is freshly allocated;
-* class initialization owns it exclusively;
-* no external mutable alias escapes;
-* no post-class-initialization mutation path exists.
+The same applies during class initialization.
 
-Likewise:
+### 10.4 Overlapping state graphs
 
-```java
-Names(List<String> source) {
-    values = new ArrayList<>();
-    values.addAll(source);
-}
-```
+The same object may be reachable from several owners or roots.
 
-may eventually be valid when the object under construction exclusively owns the list.
+A later construction context must not “thaw” state that has already frozen
+elsewhere.
 
-The constructor of the nested object completing does not necessarily freeze the nested object immediately when it is still being built as part of a larger exclusively owned aggregate.
-
-### 5.4 Overlapping graphs
-
-The same object may be reachable from multiple state roots.
-
-The checker must not use a later initialization context to “thaw” state already frozen elsewhere.
-
-If an instance references already initialized static state:
+Example:
 
 ```java
-this.shared = TYPE_STATIC_VALUE;
+this.shared = ExistingType.SHARED;
 ```
 
-the instance constructor must not mutate that shared static object.
-
-If a reference is shared across multiple owners, the checker must account for every alias and every applicable freeze boundary.
+The new instance constructor must not mutate `SHARED` merely because the new
+instance is under construction.
 
 Unknown sharing must fail closed.
 
 ---
 
-## 6. `final` Is Neither Required Nor Sufficient
+## 11. `final` Is Neither Required Nor Sufficient
 
 A field is not required to be `final`.
 
-This may be immutable:
+This may pass:
 
 ```java
 @Immutable
 final class Currency {
-
     private String code;
 
     Currency(String code) {
         this.code = code;
     }
-
-    String code() {
-        return code;
-    }
 }
 ```
 
-The absence of `final` is not itself a violation when the checker proves that no post-freeze write is possible.
+The absence of `final` does not create mutation when no legal post-freeze write
+path exists.
 
 The same applies to static fields:
 
 ```java
 @Immutable
 final class Configuration {
-
     private static String mode;
 
     static {
@@ -353,17 +732,16 @@ final class Configuration {
 }
 ```
 
-The absence of `final` is not itself a violation if `mode` cannot change after successful class initialization.
-
 Conversely:
 
 ```java
 private final List<String> values;
 ```
 
-is not necessarily immutable.
+does not prove immutability.
 
-`final` prevents reassignment of the reference. It does not prevent mutation of the referenced list.
+`final` prevents reassignment of the reference. It does not freeze the referenced
+object.
 
 Likewise:
 
@@ -371,7 +749,7 @@ Likewise:
 public static final List<String> VALUES = new ArrayList<>();
 ```
 
-is not immutable merely because the static reference is final.
+is not immutable merely because the reference is final.
 
 Therefore:
 
@@ -387,143 +765,16 @@ non-final field
 ≠ mutable state
 ```
 
-Field modifiers are evidence used in a proof. They are not the definition of immutability.
+Modifiers are proof evidence. They are not the definition of immutability.
 
 ---
 
-## 7. Mutable Implementation Types Are Allowed
+## 12. External Field Writability
 
-A mutable Java type must not be rejected solely because its class provides mutating operations.
+A non-private, non-final instance field normally fails because external code can
+write it after construction.
 
-This may eventually pass:
-
-```java
-@Immutable
-final class Names {
-
-    private List<String> values;
-
-    Names(List<String> source) {
-        values = new ArrayList<>(source);
-    }
-
-    int size() {
-        return values.size();
-    }
-
-    String get(int index) {
-        return values.get(index);
-    }
-}
-```
-
-`ArrayList` is mutable as a type.
-
-The relevant question is whether this particular retained list instance:
-
-* is owned safely;
-* has no unsafe external alias;
-* is not mutated after the instance freeze boundary;
-* does not escape in mutation-capable form.
-
-The same principle applies to static class state:
-
-```java
-@Immutable
-final class Registry {
-
-    private static List<String> names;
-
-    static {
-        names = new ArrayList<>();
-        names.add("main");
-    }
-}
-```
-
-A mutable implementation object can belong to immutable class state if the checker proves that the object is safely constructed, owned, frozen, and not exposed.
-
-The project must distinguish:
-
-```text
-type can mutate
-```
-
-from:
-
-```text
-this retained object can mutate after its applicable freeze boundary
-```
-
-This distinction is fundamental.
-
----
-
-## 8. Recursive Verification
-
-The checker must recursively analyze the complete supported state graph.
-
-Example:
-
-```text
-Order
- ├── instance: customer
- │    └── Customer.address
- │         └── Address.country
- │              └── Country.code
- │
- └── static: DEFAULT_POLICY
-      └── Policy.rules
-           └── rule elements
-```
-
-Referenced classes do not need their own `@Immutable` annotation.
-
-The annotation on the root requests verification of the complete reachable graph.
-
-Annotation presence on a referenced class must never be treated as proof by itself.
-
-### 8.1 Cycles
-
-Cycles are valid:
-
-```text
-A -> B -> C
-     ^    |
-     |____|
-```
-
-Static cycles are also valid:
-
-```text
-A.<static>.B_VALUE -> B
-B.<static>.A_VALUE -> A
-```
-
-The checker must be cycle-safe and deterministic.
-
-It must use explicit proof states or equivalent semantics, such as:
-
-```text
-UNSEEN
-VISITING
-PROVEN
-FAILED
-```
-
-A cycle must not cause infinite recursion.
-
-A cycle containing a real violation must still fail and report the violation.
-
----
-
-## 9. Instance and Static Field Rules
-
-### 9.1 Instance fields
-
-A non-private, non-final instance field is externally writable and must fail unless a stronger language rule makes external mutation impossible and the checker explicitly proves that fact.
-
-Example:
+This fails:
 
 ```java
 @Immutable
@@ -532,17 +783,10 @@ final class Value {
 }
 ```
 
-must fail because external code can execute:
+A non-private, non-final static field normally fails because external code can
+write it after class initialization.
 
-```java
-instance.value = 10;
-```
-
-### 9.2 Static fields
-
-A non-private, non-final static field is externally writable after class initialization and must fail.
-
-Example:
+This fails:
 
 ```java
 @Immutable
@@ -551,21 +795,14 @@ final class Configuration {
 }
 ```
 
-must fail because external code can execute:
+The same principle applies to:
 
-```java
-Configuration.mode = "test";
-```
+- public fields;
+- protected fields;
+- package-private fields.
 
-The same applies to:
-
-* protected static fields;
-* package-private static fields;
-* public static fields.
-
-### 9.3 Public final fields
-
-A public final field may pass only if the complete reachable state behind it is proven immutable.
+A public or otherwise exposed final reference may pass only when its complete
+reachable state is proven immutable.
 
 This may pass:
 
@@ -576,297 +813,388 @@ public static final int VERSION = 1;
 This may fail:
 
 ```java
-public static final List<String> VALUES = new ArrayList<>();
+public final List<String> values = new ArrayList<>();
 ```
 
-because external code can mutate the retained list.
-
-### 9.4 Static state of recursive classes
-
-When a source class participates in the recursive proof graph, its declared static state also participates.
-
-Example:
-
-```java
-final class Address {
-
-    private static int revision;
-    private String city;
-
-    static void incrementRevision() {
-        revision++;
-    }
-}
-
-@Immutable
-final class Person {
-    private final Address address;
-}
-```
-
-`Person` must fail because verification of `Address` includes `Address.revision`, and `incrementRevision()` creates a post-class-initialization mutation path.
-
-Static state is not ignored merely because the root reaches the class through an instance field.
+because external code can mutate the exposed list.
 
 ---
 
-## 10. Initialization-Phase Mutation
+## 13. Mutable Implementation Types
 
-### 10.1 Direct instance initialization
+A mutable type must not be rejected merely because its class exposes mutators.
 
-Direct mutation of instance state may be allowed in:
-
-* instance field initializers;
-* instance initializer blocks;
-* constructors of the object being constructed.
-
-Example:
+This may pass:
 
 ```java
 @Immutable
-final class Value {
+final class Names {
+    private List<String> values;
 
-    private int value;
+    Names(List<String> source) {
+        values = new ArrayList<>(source);
+    }
 
-    Value(int value) {
-        this.value = value;
+    String get(int index) {
+        return values.get(index);
     }
 }
 ```
 
-### 10.2 Direct static initialization
+The relevant question is whether this particular retained list:
 
-Direct mutation of declared static state may be allowed in:
+- is safely owned;
+- has no unsafe mutable alias;
+- cannot be structurally modified after freeze;
+- does not escape in mutation-capable form;
+- contains only recursively safe items.
 
-* static field initializers;
-* static initializer blocks of the declaring class.
+The checker must distinguish:
 
-Example:
-
-```java
-@Immutable
-final class Configuration {
-
-    private static int version;
-
-    static {
-        version = 1;
-    }
-}
+```text
+the type can mutate
 ```
 
-### 10.3 Constructor-only helpers
+from:
 
-A mutating helper may be valid when the checker proves that it is reachable only during construction.
-
-Example:
-
-```java
-Value(int value) {
-    initialize(value);
-}
-
-private void initialize(int value) {
-    this.value = value;
-}
+```text
+this retained instance can legally mutate after freeze
 ```
 
-This may pass only when the checker proves that `initialize()` cannot be reached after construction.
-
-The checker must not merely scan for assignments and reject the helper without considering reachability once call-graph support exists.
-
-If constructor-only reachability cannot be proven, verification must fail closed.
-
-### 10.4 Class-initializer-only helpers
-
-The same principle applies to static class initialization:
-
-```java
-static {
-    initialize();
-}
-
-private static void initialize() {
-    version = 1;
-}
-```
-
-This may pass only when the checker proves that `initialize()` is reachable exclusively during class initialization.
-
-If the method can be called after class initialization, or if exclusivity cannot be proven, verification must fail.
-
-### 10.5 Deferred execution
-
-Code declared during initialization is not automatically initialization-phase execution.
-
-Example:
-
-```java
-static {
-    Runnable deferred = () -> version++;
-}
-```
-
-The lambda may execute after class initialization and must therefore fail unless the checker proves that it is invoked completely during initialization and cannot escape.
-
-Likewise:
-
-```java
-Value() {
-    Runnable deferred = () -> value++;
-}
-```
-
-must not be accepted merely because the lambda was created in a constructor.
-
-Execution timing matters, not lexical location alone.
+That distinction is central to the project.
 
 ---
 
-## 11. Post-Freeze Mutation Is Forbidden
+## 14. Recursive Verification
 
-After the applicable freeze boundary, mutation of verified state is forbidden.
+The annotation on a root requests verification of the complete supported
+reachable graph.
 
-### 11.1 Direct instance mutation
+Referenced source types do not need their own `@Immutable` annotation.
 
-This must fail:
+Example:
+
+```text
+Order.customer
+    -> Customer.address
+    -> Address.country
+    -> Country.code
+```
+
+The checker must recursively inspect participating source classes and records.
+
+Annotation presence on a referenced type is not proof.
+
+### 14.1 Cycles
+
+Cycles are valid:
+
+```text
+A -> B -> C
+     ^    |
+     |____|
+```
+
+The proof engine must be cycle-safe.
+
+It must use explicit states or equivalent semantics, such as:
+
+```text
+UNSEEN
+VISITING
+PROVEN
+FAILED
+```
+
+A back edge must terminate.
+
+A cycle containing a real violation must still fail.
+
+### 14.2 Shared types
+
+A type may be reached through several paths.
+
+The checker may use a deterministic canonical path for diagnostics, but it must
+not lose a violation because a type was previously visited through another path.
+
+---
+
+## 15. Ordinary Java Classes
+
+Ordinary classes may participate as:
+
+- annotated roots;
+- recursively referenced fields;
+- array elements;
+- collection elements;
+- map keys;
+- map values;
+- source superclasses.
+
+The checker must consider:
+
+- declared instance fields;
+- declared static fields;
+- inherited state;
+- constructor behavior;
+- initializer behavior;
+- methods capable of mutation or escape;
+- nested and nestmate code with access to private state.
+
+Ordinary non-static inner classes contain implicit enclosing-instance state.
+
+They may pass only when that state is included and proven.
+
+If enclosing or captured state cannot be analyzed, verification fails closed.
+
+Local and anonymous classes require the same conservative treatment.
+
+Static member classes do not have an enclosing-instance reference and may be
+analyzed as ordinary types.
+
+---
+
+## 16. Java Records
+
+Records are part of the intended V1 product on record-capable compilers.
+
+Records are not automatically immutable.
+
+This record is only shallowly final:
 
 ```java
-void increment() {
-    value++;
+record Names(List<String> values) {
 }
 ```
 
-### 11.2 Direct static mutation
-
-This must fail:
+The generated accessor exposes the retained list:
 
 ```java
-static void incrementVersion() {
-    version++;
+names.values().add("Alice");
+```
+
+Therefore:
+
+```text
+record
+≠ automatically immutable
+```
+
+### 16.1 Java 8 compatibility
+
+The same Java 8-compatible processor artifact must support records when running
+on a capable compiler.
+
+On Java 8:
+
+- record source cannot be declared;
+- ordinary-class verification remains available;
+- record-specific logic remains dormant.
+
+Record support must not make the published processor unusable on Java 8.
+
+### 16.2 Record components
+
+Every record component is verified instance state.
+
+The checker must recursively verify component types through the same graph model
+used for ordinary fields.
+
+Component paths use:
+
+```text
+RecordType.component
+```
+
+A component may be:
+
+- a primitive;
+- an explicit semantic leaf;
+- an ordinary custom object;
+- another record;
+- an array;
+- a supported collection;
+- a supported map;
+- another supported reachable structure.
+
+A component element and its synthetic backing field must not be counted twice.
+
+### 16.3 Exact runtime type
+
+Records are final and therefore have an exact runtime type.
+
+This removes subclass uncertainty for the record itself.
+
+It does not prove:
+
+- component immutability;
+- component ownership;
+- constructor safety;
+- accessor safety;
+- static-state safety.
+
+### 16.4 Generated canonical constructor
+
+A generated canonical constructor retains component arguments directly.
+
+This may pass:
+
+```java
+@Immutable
+record Identifier(String value) {
 }
 ```
 
-It must also fail when performed from an instance method:
+`String` is an explicit semantic leaf.
+
+This fails for an externally owned mutable container:
 
 ```java
-void incrementVersion() {
-    version++;
+@Immutable
+record Names(List<String> values) {
 }
 ```
 
-or from a constructor:
+The generated constructor retains the caller’s mutable list alias.
+
+### 16.5 Explicit canonical constructor
+
+An explicit canonical constructor must be analyzed as source.
+
+This is unsafe:
 
 ```java
-Value() {
-    version++;
+record Names(List<String> values) {
+    Names(List<String> values) {
+        this.values = values;
+    }
 }
 ```
 
-Class initialization occurs before ordinary object construction. A constructor must not mutate already frozen class state.
+The caller retains a mutable alias.
 
-### 11.3 Reachable-object mutation
-
-This must fail:
+This may establish ownership:
 
 ```java
-void add(String value) {
-    values.add(value);
+record Names(List<String> values) {
+    Names(List<String> values) {
+        this.values = new ArrayList<>(values);
+    }
 }
 ```
 
-The field reference did not change, but reachable retained state changed.
+The accessor must still be analyzed separately.
 
-### 11.4 Static reachable-object mutation
+### 16.6 Compact constructors
 
-This must fail:
+A compact constructor implicitly assigns each final component parameter to its
+component field after the constructor body.
+
+The checker must model that implicit assignment.
+
+This may establish fresh ownership:
 
 ```java
-static void addDefault(String value) {
-    DEFAULT_VALUES.add(value);
+record Names(List<String> values) {
+    Names {
+        values = new ArrayList<>(values);
+    }
 }
 ```
 
-The static reference may be final, but its retained object changed after class initialization.
+The checker must prove:
 
-### 11.5 Lazy caches
+- the final component value;
+- fresh ownership where required;
+- generic role preservation;
+- absence of unsafe aliases;
+- absence of escape;
+- deterministic assignment on every path.
 
-Lazy initialization, memoization, counters, statistics, and caches are post-freeze mutation.
+Conditional, ambiguous, raw, unchecked, helper-produced, or unproven component
+origins fail closed.
+
+### 16.7 Auxiliary constructors
+
+Auxiliary record constructors delegate to canonical construction.
+
+They may pass when their delegation and ownership effects are proven.
+
+Unknown constructor delegation or ownership flow fails closed.
+
+### 16.8 Generated accessors
+
+A generated component accessor returns the exact retained component.
+
+It is safe for a recursively immutable value.
+
+It is unsafe for a retained mutable container, array, view, or other
+mutation-capable object.
+
+A generated mutable-component accessor is an escape path.
+
+### 16.9 Explicit accessors
+
+An explicit accessor is analyzed as ordinary source.
 
 This fails:
 
 ```java
-String value() {
-    if (cached == null) {
-        cached = calculate();
-    }
-    return cached;
+public List<String> values() {
+    return values;
 }
 ```
 
-This also fails for static caches:
+This may pass:
 
 ```java
-static String value() {
-    if (cached == null) {
-        cached = calculate();
-    }
-    return cached;
+public List<String> values() {
+    return new ArrayList<>(values);
 }
 ```
 
-Whether the mutation is externally observable is irrelevant under the strict user-class contract.
+only when the returned object is a fresh independent copy whose nested retained
+references are safe.
 
-The state changed after its freeze boundary.
+### 16.10 Generated record methods
 
----
+Generated `equals`, `hashCode`, and `toString` may be handled by an explicit
+language semantic model.
 
-## 12. Explicit Semantic Leaf Models
+User-written overrides must be analyzed as ordinary methods.
 
-Selected platform types may be treated as atomic immutable semantic leaves.
+The generated-method model must not hide mutation or escape introduced by
+source code.
 
-Examples may include:
+### 16.11 Record static state
+
+Static fields declared by a record are verified under the same class-state
+freeze boundary as ordinary classes.
+
+### 16.12 Recursive records
+
+Records may participate anywhere in the proof graph:
 
 ```text
-String
-Boolean
-Integer
-Long
-UUID
+ordinary class -> record
+record -> ordinary class
+record -> record
+collection -> record element
+map -> record key/value
+array -> record element
 ```
 
-A semantic leaf model means:
-
-* the checker trusts the type according to an explicit project-defined rule;
-* the checker does not recursively inspect that type’s internal implementation;
-* internal platform caches may be abstracted away by that semantic model;
-* the model must be deterministic and documented.
-
-This exception applies only to explicitly modeled types.
-
-It does not permit lazy caches or internal mutation in ordinary user classes annotated or recursively verified by this project.
-
-The checker must not trust a type merely because it is:
-
-* final;
-* in `java.*`;
-* documented as immutable;
-* named like a value type;
-* annotated by an unrelated library.
-
-Subclassable types require special care because a field declared as that type may contain a mutable subtype.
-
-Unknown polymorphism must fail closed.
+Cycles must remain safe and deterministic.
 
 ---
 
-## 13. Ownership
+## 17. Ownership
 
 Mutable retained objects require an ownership proof.
 
-### 13.1 Constructor aliases
+### 17.1 External constructor aliases
 
-This must not pass merely because the owner does not mutate the field:
+This is unsafe:
 
 ```java
 Names(List<String> values) {
@@ -874,32 +1202,20 @@ Names(List<String> values) {
 }
 ```
 
-The caller retains an alias:
+The caller retains a mutable alias.
 
-```java
-List<String> input = new ArrayList<>();
-Names names = new Names(input);
-input.add("A");
-```
-
-The retained state changes after construction.
-
-### 13.2 Static aliases
-
-Static class state has the same ownership requirement.
+### 17.2 Static aliases
 
 This may be unsafe:
 
 ```java
 private static final List<String> VALUES =
-        ExternalRegistry.obtainMutableList();
+        ExternalRegistry.mutableValues();
 ```
 
-If another party retains a mutable alias, class state can change after class initialization.
+Another party may retain a mutable alias after class initialization.
 
-The checker must prove ownership or immutability of the returned value.
-
-### 13.3 Fresh allocation
+### 17.3 Fresh allocation
 
 Fresh allocation may establish ownership:
 
@@ -915,33 +1231,47 @@ static {
 }
 ```
 
-Freshness alone is not sufficient.
+Freshness is necessary but not always sufficient.
 
-The checker must also prove that the object does not escape and is not shared unsafely.
+The checker must also prove:
 
-### 13.4 Ownership transfer
+- the object does not escape;
+- no competing owner remains;
+- every applicable initialization path is safe;
+- nested retained state is safe.
 
-Ownership may be transferred into an instance or class-state graph only when the checker can prove that no external mutation-capable alias remains.
+### 17.4 Ownership transfer
 
-Unknown ownership transfer must fail closed.
+Ownership may be transferred only when the checker proves that no external
+mutation-capable alias remains.
+
+Unknown ownership transfer fails closed.
+
+### 17.5 Local aliases
+
+A local alias to verified state carries the same ownership and freeze status as
+the original reference.
+
+Aliases must be conservatively joined across control flow.
+
+A possible target must not be discarded merely because another syntactic branch
+was scanned later.
 
 ---
 
-## 14. Defensive Copying
+## 18. Defensive Copying
 
-Defensive copying can establish ownership.
+Defensive copying may establish ownership.
 
 Example:
 
 ```java
-Names(List<String> source) {
-    values = new ArrayList<>(source);
-}
+values = new ArrayList<>(source);
 ```
 
-The new container may be privately owned.
+This creates a fresh container.
 
-However, copying must be analyzed recursively.
+It does not necessarily create fresh elements.
 
 For:
 
@@ -955,41 +1285,200 @@ this:
 new ArrayList<>(people)
 ```
 
-copies the container but preserves aliases to the same `Person` elements.
+preserves aliases to every `Person`.
 
 Therefore:
 
 ```text
-container copy
-≠ deep object-graph copy
+fresh container
+≠ deep copy of the retained graph
 ```
 
 The checker must verify:
 
-* container ownership;
-* element immutability or element ownership;
-* nested container ownership;
-* key and value ownership for maps;
-* any remaining aliases.
+- container ownership;
+- element immutability or ownership;
+- nested container ownership;
+- map-key ownership;
+- map-value ownership;
+- remaining external aliases.
 
-The same rule applies to static state created through static field initializers or static initializer blocks.
+Returning a defensive copy is similarly safe only when it does not preserve
+unsafe aliases into verified state.
 
 ---
 
-## 15. Containers, Arrays, and Elements
+## 19. Collections and Maps
 
-Arrays and collections are mutable implementation structures.
+A collection field is immutable only when both are proven:
 
-They are not automatically forbidden.
+```text
+container safety
++
+item safety
+```
 
-### 15.1 Arrays
+A map requires:
 
-This may eventually pass:
+```text
+container safety
++
+key safety
++
+value safety
+```
+
+### 19.1 Explicit semantic models
+
+Collection behavior must be modeled by resolved type and method signature.
+
+Do not classify operations by method name alone.
+
+Every supported collection implementation must define:
+
+- ownership origins;
+- construction-phase mutators;
+- post-freeze mutators;
+- read operations;
+- aliasing views;
+- iterators;
+- streams;
+- callback effects;
+- copy behavior;
+- generic item roles.
+
+Unsupported implementations and operations fail closed.
+
+### 19.2 Mutable collection types
+
+A mutable implementation such as `ArrayList` may participate in immutable state
+when ownership and freezing are proven.
+
+A field must not pass merely because:
+
+- it is final;
+- its declared type is an interface;
+- it is wrapped in an unmodifiable-looking object;
+- no current caller mutates it;
+- an item type carries some unrelated immutability annotation.
+
+### 19.3 Construction mutation
+
+Supported mutation may occur before the applicable freeze boundary.
+
+Example:
+
+```java
+private List<String> values = new ArrayList<>();
+
+Names() {
+    values.add("A");
+}
+```
+
+The same principle applies during static initialization.
+
+### 19.4 Post-freeze mutation
+
+This fails:
+
+```java
+void add(String value) {
+    values.add(value);
+}
+```
+
+This also fails for static retained state after class initialization.
+
+### 19.5 Elements, keys, and values
+
+Every retained item participates in the recursive state graph.
+
+Paths use:
+
+```text
+Order.lines -> element -> Line.price
+Registry.entries -> key -> Key.id
+Registry.entries -> value -> Entry.state
+```
+
+### 19.6 Nested containers
+
+Nested containers are semantically valid only when ownership and safety are
+proven at every level.
+
+Example:
+
+```java
+List<List<Line>>
+```
+
+requires proof of:
+
+- outer-list ownership;
+- every inner-list ownership;
+- every `Line`;
+- every alias and escape at both container levels.
+
+A current release may reject nested containers until that proof is implemented.
+
+### 19.7 Raw and unchecked flows
+
+Raw types, unchecked casts, heap-polluted aliases, and erased insertion paths
+must not bypass item verification.
+
+Visible raw or unchecked flows affecting retained state must be modeled or
+rejected.
+
+Separately compiled external heap pollution may remain outside what source-only
+analysis can observe and must be described accurately in public limitations.
+
+### 19.8 Views and traversal objects
+
+Objects such as these may retain aliases:
+
+```text
+Iterator
+ListIterator
+Spliterator
+Stream
+subList
+keySet
+values
+entrySet
+```
+
+They are safe only when their capabilities and escape behavior are explicitly
+modeled.
+
+Unknown view or traversal semantics fail closed.
+
+### 19.9 Callbacks
+
+Callback operations require proof of:
+
+- mutation effects;
+- retained arguments;
+- returned aliases;
+- deferred execution;
+- callback escape.
+
+Unknown callback effects fail closed.
+
+---
+
+## 20. Arrays
+
+Arrays are mutable containers and must not be rejected merely because their
+types are mutable.
+
+### 20.1 Primitive arrays
+
+This may pass:
 
 ```java
 @Immutable
 final class Bytes {
-
     private byte[] values;
 
     Bytes(byte[] source) {
@@ -1002,131 +1491,119 @@ final class Bytes {
 }
 ```
 
-It may pass only when:
+The checker must prove:
 
-* the array is owned;
-* no external alias remains;
-* the array is not modified after construction;
-* the array does not escape.
+- fresh array ownership;
+- no retained external alias;
+- no post-freeze array write;
+- no mutation-capable escape.
 
-Static arrays follow the same rule, using the class-initialization freeze boundary.
+### 20.2 Object arrays
 
-### 15.2 Lists of known leaves
-
-A retained `List<String>` may pass when:
-
-* the list container is owned;
-* no mutation path exists after freeze;
-* no mutable view or iterator escapes;
-* all elements are proven leaves.
-
-### 15.3 Lists of custom objects
-
-A retained `List<Line>` may pass only when:
-
-* the list container is owned or otherwise immutable;
-* each retained `Line` is recursively proven immutable or safely owned;
-* mutable element aliases do not remain outside;
-* no list or element reference escapes unsafely;
-* no post-freeze mutator can alter the list or its elements.
-
-### 15.4 Maps
-
-For maps, both keys and values participate in the state graph.
-
-The checker must analyze:
-
-* map ownership;
-* key immutability;
-* value immutability;
-* entry views;
-* key-set views;
-* values views;
-* iterators;
-* replacement and removal operations.
-
-### 15.5 Streams and views
-
-A stream is not automatically safe.
-
-A stream, iterator, spliterator, sublist, map view, array slice, or wrapper may retain access to mutable state.
-
-The checker must reason about whether the returned object provides mutation capability or leaks retained references.
-
----
-
-## 16. Reference Escape
-
-A mutable retained reference must not escape in mutation-capable form.
-
-This fails:
+For:
 
 ```java
-List<String> values() {
+Line[] lines
+```
+
+the checker must prove:
+
+- array-container ownership;
+- every retained `Line`;
+- element aliases;
+- array escape;
+- element escape.
+
+A shallow array clone does not clone its elements.
+
+### 20.3 Array mutation
+
+Array writes may occur during an applicable owned initialization phase.
+
+Post-freeze writes fail:
+
+```java
+values[index] = newValue;
+```
+
+### 20.4 Array escape
+
+Returning the retained array normally fails:
+
+```java
+byte[] values() {
     return values;
 }
 ```
 
-The same applies to static state:
+Returning a safe fresh copy may pass:
 
 ```java
-static List<String> values() {
-    return VALUES;
+byte[] values() {
+    return values.clone();
 }
 ```
 
-### 16.1 Escape is broader than getters
+### 20.5 Nested arrays and container combinations
 
-Method names have no semantic importance.
+Arrays may participate recursively:
 
-All of these may expose state:
+```text
+array of records
+array of ordinary objects
+list of arrays
+array of lists
+map values containing arrays
+```
+
+Every container level requires independent ownership and escape proof.
+
+Current releases may reject shapes not yet modeled.
+
+---
+
+## 21. Reference Escape
+
+A mutable retained reference must not escape in mutation-capable form.
+
+Escape includes more than getters.
+
+Possible escape paths include:
+
+- direct returns;
+- public or protected fields;
+- unrelated field storage;
+- static storage;
+- array storage;
+- constructor arguments;
+- ordinary method arguments;
+- callbacks;
+- iterators;
+- views;
+- streams;
+- spliterators;
+- method references;
+- lambdas;
+- generated record accessors.
+
+Method names have no semantic authority.
+
+These signatures may all expose state:
 
 ```java
 List<String> values()
 Collection<String> view()
 Iterator<String> iterator()
-Spliterator<String> spliterator()
-Stream<String> stream()
 Object state()
 void consume(Consumer<List<String>> consumer)
 ```
 
-The checker must analyze reference flow and capabilities, not naming conventions.
-
-### 16.2 Public fields
-
-A public final field can also expose mutable retained state:
-
-```java
-public final List<String> values;
-```
-
-or:
-
-```java
-public static final List<String> VALUES;
-```
-
-Field exposure is an escape path.
-
-### 16.3 Returning copies
-
-Returning a fresh independent copy may be safe:
-
-```java
-List<String> values() {
-    return new ArrayList<>(values);
-}
-```
-
-The returned object may be mutable.
-
-That alone is irrelevant if mutating it cannot affect retained verified state.
+Returning a fresh independent copy is different from returning retained state.
 
 The checker must distinguish:
 
 ```text
-mutable returned value
+mutable returned object
 ```
 
 from:
@@ -1137,67 +1614,102 @@ mutable alias into verified state
 
 ---
 
-## 17. Method and Call Analysis
+## 22. Method and Call Analysis
 
-The checker must analyze behavior, not merely declarations.
+The checker analyzes mutation capability, not merely field declarations.
 
-Relevant executable behavior includes:
+Relevant execution includes:
 
-* constructors;
-* static initializers;
-* instance initializers;
-* field initializers;
-* public methods;
-* protected methods;
-* package-private methods;
-* private methods;
-* static methods;
-* inherited methods;
-* interface default methods;
-* lambdas;
-* anonymous and local executable bodies;
-* nested classes;
-* nestmate code;
-* method references;
-* callbacks;
-* reachable external calls.
+- field initializers;
+- initializer blocks;
+- constructors;
+- compact record constructors;
+- canonical record constructors;
+- public methods;
+- protected methods;
+- package-private methods;
+- private methods;
+- static methods;
+- inherited methods;
+- interface default methods;
+- lambdas;
+- method references;
+- nested classes;
+- local classes;
+- anonymous classes;
+- callbacks;
+- generated language behavior.
 
-### 17.1 Publicly callable mutators
+### 22.1 Externally callable mutators
 
-A public, protected, or package-visible mutator must fail even when no current call site exists.
+A legal externally callable post-freeze mutation path fails even when there is no
+current call site.
 
-It creates a legal future mutation path.
+### 22.2 Private helpers
 
-### 17.2 Private methods
+A private mutating helper is not automatically invalid.
 
-Private mutating methods require reachability analysis.
+It may pass when the checker proves that it is reachable only during:
 
-A private method may be acceptable when proven reachable only during:
+- instance construction; or
+- class initialization.
 
-* instance construction; or
-* class initialization.
+If the helper can execute after freeze, it fails.
 
-If it is reachable from any post-freeze entry point, verification must fail.
+If reachability cannot be proven, it fails closed.
 
-### 17.3 Unreachable methods
+### 22.3 Constructor-only helpers
 
-The checker should not reject a private mutating method merely because it exists when it can prove the method is unreachable after the relevant freeze boundary.
+This may eventually pass:
 
-However, if reachability cannot be established safely, verification must fail closed.
+```java
+Value(int value) {
+    initialize(value);
+}
 
-### 17.4 Calls into unknown code
+private void initialize(int value) {
+    this.value = value;
+}
+```
 
-If verified state or an alias to it is passed into unknown code, and the checker cannot prove that the call is read-only and non-escaping, verification must fail.
+only when `initialize` is proven unreachable after construction.
+
+### 22.4 Class-initializer-only helpers
+
+The same principle applies to static initialization helpers.
+
+### 22.5 Deferred execution
+
+Code created during initialization is not automatically initialization-phase
+execution.
+
+This fails unless complete execution and non-escape are proven:
+
+```java
+Value() {
+    Runnable task = () -> value++;
+}
+```
+
+Execution timing matters, not only lexical location.
+
+### 22.6 Unknown calls
+
+Passing verified state to unknown code fails when mutation, retention, or escape
+cannot be excluded.
+
+Method signatures and names do not prove effects.
 
 ---
 
-## 18. Mutation of Unrelated State
+## 23. Mutation of Unrelated State
 
 The checker is not a general side-effect checker.
 
-Mutation of an unrelated object is not automatically an immutability violation.
+Mutation of unrelated local or argument state is not automatically an
+immutability violation.
 
-Example:
+This may be valid:
 
 ```java
 void copyInto(List<String> destination) {
@@ -1205,9 +1717,10 @@ void copyInto(List<String> destination) {
 }
 ```
 
-may be valid if `destination` is not part of the verified state graph and does not become an alias into it.
+provided `destination` is not part of the verified graph and does not become an
+alias into it.
 
-Likewise:
+This may also be valid:
 
 ```java
 String render() {
@@ -1217,53 +1730,41 @@ String render() {
 }
 ```
 
-may be valid because the temporary builder is unrelated local state.
+The central question is:
 
-### 18.1 Unrelated global state
-
-The checker does not automatically verify every static field in the entire application.
-
-Static fields are included when they are declared by classes participating in the proof graph.
-
-Unrelated external class state is outside the graph unless:
-
-* verified state references it;
-* verified state aliases it;
-* verified methods mutate it in a way that affects the verified graph;
-* it is otherwise incorporated into the proof.
-
-This project verifies the state of the annotated class and recursively participating classes, not the entire JVM.
+> Does this execution mutate or expose verified state?
 
 ---
 
-## 19. Inheritance
+## 24. Inheritance
 
 Inherited state and behavior are part of the actual object.
 
-A verified class cannot ignore:
+Verification must account for:
 
-* superclass instance fields;
-* superclass static fields;
-* superclass constructors;
-* superclass instance methods;
-* superclass static methods;
-* inherited mutation paths.
+- superclass instance fields;
+- superclass static fields;
+- superclass constructors;
+- inherited instance methods;
+- inherited static methods;
+- inherited mutation and escape paths.
 
-Source-available superclasses must be recursively analyzed.
+Unavailable or untrusted superclass behavior fails closed.
 
-Unavailable or untrusted superclass behavior must fail closed.
+`@Immutable` on a superclass does not automatically certify its subclasses.
 
-`@Immutable` on a superclass does not automatically certify subclasses.
+A subclass may introduce mutable state or behavior.
 
-A subclass may add mutable state or behavior.
+Every subtype claiming the guarantee requires an appropriate proof.
 
-Each subtype requires its own valid proof when it wants the guarantee.
+Records use the explicit language model for `java.lang.Record`; absence of
+`java.lang.Record` source must not by itself cause failure.
 
 ---
 
-## 20. Polymorphism
+## 25. Polymorphism
 
-Declared types do not necessarily identify exact runtime types.
+A declared type does not necessarily identify the runtime type.
 
 Example:
 
@@ -1271,70 +1772,174 @@ Example:
 private Base state;
 ```
 
-The field may contain a mutable subclass.
+The field may contain a mutable subtype.
 
-The checker must not certify the reference merely because `Base` appears immutable.
+The checker must not certify it merely because `Base` appears immutable.
 
-Safe proofs may eventually include:
+Safe runtime-type proofs may include:
 
-* a final declared type;
-* an exact fresh allocation;
-* an exact constructor assignment;
-* an exhaustively verified sealed hierarchy;
-* trusted verification metadata;
-* another explicit deterministic proof.
+- a final declared type;
+- a final record type;
+- an exact fresh allocation;
+- a proven constructor assignment;
+- an exhaustively verified sealed hierarchy;
+- trusted verification metadata;
+- another explicit deterministic model.
 
-Interfaces and abstract types require conservative runtime-target analysis.
+Unknown runtime subtype behavior fails closed.
 
-Unknown dynamic dispatch must fail closed when it can affect verified state.
+`final` is useful evidence in this proof. It remains neither a complete
+definition nor a general requirement for the root type.
 
 ---
 
-## 21. External Dependencies and Module Boundaries
+## 26. Generics
 
-Source for an external dependency may be unavailable.
+Generic type arguments participate in the proof.
 
-A method signature alone does not establish whether the implementation:
+The checker must account for type substitution through:
 
-* mutates its receiver;
-* mutates arguments;
-* stores aliases;
-* returns retained state;
-* invokes callbacks;
-* mutates static state.
+- parameterized fields;
+- generic custom classes;
+- generic superclasses;
+- record components;
+- collection elements;
+- map keys and values;
+- nested generic structures.
+
+Raw types, wildcards, type variables, captures, and intersections may pass only
+when the relevant runtime and retained-state types are proven.
+
+Unknown substitution fails closed.
+
+The checker must not rely on compiler warnings alone to preserve immutability.
+
+---
+
+## 27. External Dependencies and Module Boundaries
+
+Source code for dependency classes may be unavailable.
+
+A signature does not prove whether an implementation:
+
+- mutates its receiver;
+- mutates arguments;
+- stores aliases;
+- returns retained state;
+- invokes callbacks;
+- mutates class state.
 
 Acceptable proof sources may include:
 
-* source available to the current compiler analysis;
-* explicit built-in semantic models;
-* trusted project-generated verification metadata;
-* supported bytecode analysis;
-* other explicitly documented deterministic mechanisms.
+- source available to the current compilation;
+- explicit built-in semantic models;
+- trusted checker-generated metadata;
+- supported bytecode analysis;
+- other reviewed deterministic mechanisms.
 
-The mere presence of an unrelated third-party `@Immutable` annotation is not proof.
+The presence of an unrelated third-party `@Immutable` annotation is not proof.
 
-### 21.1 Cross-module metadata
+### 27.1 Cross-module verification metadata
 
-Before V1 is complete, the project should support trustworthy verification metadata for previously verified classes and class state.
+V1 should support trustworthy metadata for classes and records previously
+verified by this checker.
 
-That metadata must:
+The metadata must:
 
-* identify the checker contract version;
-* identify the verified type;
-* distinguish successful verification from mere annotation presence;
-* be deterministic;
-* resist accidental stale reuse;
-* preserve fail-closed behavior when incompatible or unavailable.
+- identify the verified type;
+- identify the checker contract version;
+- distinguish successful proof from annotation presence;
+- identify relevant supported semantic capabilities;
+- be deterministic;
+- prevent incompatible or stale proof reuse;
+- fail closed when absent, invalid, or incompatible.
 
-Unknown compiled classes must fail closed.
+The annotation API must remain independent of this metadata implementation.
+
+### 27.2 Generated source and incremental compilation
+
+Generated types and partial compilation may affect source availability.
+
+The checker must either:
+
+- delay verification until required source models are available;
+- consume trusted proof metadata; or
+- fail closed accurately.
+
+It must not silently assume missing generated or incrementally compiled behavior
+is safe.
 
 ---
 
-## 22. Unknown Means Unproven
+## 28. Explicit Semantic Leaves
+
+Selected platform types may be modeled as atomic immutable semantic leaves.
+
+Examples may include:
+
+```text
+String
+Boolean
+Integer
+Long
+UUID
+```
+
+A semantic leaf model means:
+
+- the type is explicitly named and reviewed;
+- the checker does not recursively inspect implementation internals;
+- internal platform caches may be abstracted away;
+- subclassing and runtime-type behavior have been considered;
+- the model is deterministic and documented.
+
+This exception does not permit post-freeze caches in ordinary user classes.
+
+The checker must not trust a type merely because it is:
+
+- final;
+- in `java.*`;
+- documented as immutable;
+- named like a value;
+- a record;
+- marked by an unrelated annotation.
+
+Subclassable value classes require additional care because a declared field may
+contain a mutable subtype.
+
+---
+
+## 29. Internal Caches and Lazy State
+
+The ordinary user-type contract is strict.
+
+This fails:
+
+```java
+String value() {
+    if (cached == null) {
+        cached = calculate();
+    }
+    return cached;
+}
+```
+
+It also fails for static lazy caches after class initialization.
+
+Whether the mutation is logically invisible is irrelevant.
+
+The physical verified state changed after freeze.
+
+Explicit semantic leaf models are the only deliberate abstraction over such
+internal platform behavior.
+
+---
+
+## 30. Unknown Means Unproven
 
 This is a core safety invariant.
 
-When analysis reaches state-relevant behavior it cannot understand sufficiently:
+When state-relevant behavior is unknown:
 
 ```text
 unknown
@@ -1358,35 +1963,37 @@ It must never mean:
 assume safe
 ```
 
-False rejection is preferable to falsely certifying mutable state as immutable.
+False rejection is preferable to false certification.
 
-Improving the checker should primarily reduce false rejections by adding stronger proofs.
-
-It must not reduce the meaning of successful verification.
+New features should reduce false rejections by adding stronger proofs, not by
+weakening the guarantee.
 
 ---
 
+## 31. Supported Ordinary Mutation Mechanisms
 
-## 23. Supported Mutation Mechanisms
+Within the supported ordinary-Java model, the checker must model or fail closed
+for relevant mechanisms such as:
 
-The V1 proof obligation includes mutation and escape mechanisms expressed through supported ordinary Java source constructs.
+- field assignments;
+- compound assignments;
+- increments and decrements;
+- array writes;
+- collection and map mutators;
+- aliases;
+- returns;
+- argument passing;
+- field storage;
+- array storage;
+- callbacks;
+- iterators and views;
+- ordinary method effects;
+- record constructor assignment;
+- generated record accessor exposure;
+- mutations through nested objects;
+- mutations through container elements, keys, and values.
 
-The checker must model or fail closed for supported operations such as:
-
-* ordinary field assignments;
-* compound assignments;
-* increments and decrements;
-* array writes once array support is implemented;
-* collection and map mutators;
-* iterator and mutable-view operations;
-* aliases to verified state;
-* returning verified state;
-* passing verified state to ordinary method calls;
-* ordinary method effects on verified state;
-* mutations reachable through nested custom objects;
-* mutations reachable through collection elements, map keys, and map values.
-
-For mechanisms inside the supported proof model:
+For mechanisms within the declared supported model:
 
 ```text
 not recognized
@@ -1398,77 +2005,70 @@ must never mean:
 safe
 ```
 
-The checker must either model the relevant effect or reject the program as unproven.
+---
 
-Support may be introduced incrementally. Current-status documentation must identify which ordinary Java mechanisms are implemented and which remain fail-closed.
+## 32. Deferred Low-Level and Runtime-Bypass Mechanisms
+
+The initial V1 guarantee does not include mutation performed through low-level,
+reflective, native, or runtime-instrumentation mechanisms such as:
+
+- Java reflection;
+- `Unsafe`;
+- `VarHandle`;
+- field-writing `MethodHandle` operations;
+- `AtomicIntegerFieldUpdater`;
+- `AtomicLongFieldUpdater`;
+- `AtomicReferenceFieldUpdater`;
+- JNI or other native code;
+- bytecode instrumentation;
+- debugger memory modification;
+- hostile JVM agents;
+- unsupported serialization or deserialization bypasses.
+
+The checker is not required to detect or reject these mechanisms in the initial
+V1 release.
+
+Their effects are outside the verified guarantee, even when such APIs appear
+explicitly in analyzed source.
+
+Public documentation must state this boundary accurately.
+
+Future versions may add models or rejection rules for selected mechanisms.
 
 ---
 
-## 24. Deferred Low-Level, Reflective, and Runtime-Bypass Mechanisms
+## 33. Immutability Is Not Purity
 
-The initial V1 guarantee does not include mutation performed through low-level, reflective, native, or runtime-instrumentation mechanisms such as:
+Successful verification does not prove mathematical purity.
 
-* Java reflection;
-* `Unsafe`;
-* `VarHandle`;
-* field-writing `MethodHandle` operations;
-* `AtomicIntegerFieldUpdater`;
-* `AtomicLongFieldUpdater`;
-* `AtomicReferenceFieldUpdater`;
-* JNI or other native code;
-* bytecode instrumentation;
-* debugger memory modification;
-* hostile JVM agents;
-* unsupported serialization or deserialization bypasses.
+A verified method may:
 
-The checker is not required to detect or reject these mechanisms in the initial V1 release.
+- allocate temporary objects;
+- log;
+- perform I/O;
+- read external state;
+- call services;
+- mutate unrelated arguments;
+- produce different outputs from external conditions.
 
-Their effects are outside the verified guarantee even when such APIs appear explicitly in analyzed source.
-
-Public documentation must state this boundary clearly and must not claim protection against these mechanisms.
-
-Future versions may add explicit models or rejection rules for some deferred mechanisms. Such additions strengthen the proof capability but are not required for the initial V1 contract.
+Those behaviors are not automatically mutations of verified state.
 
 ---
 
-## 25. Immutability Is Not Purity
-
-The checker verifies state immutability.
-
-It does not generally prove mathematical purity.
-
-An immutable object’s methods may:
-
-* perform I/O;
-* log;
-* allocate temporary objects;
-* read external state;
-* mutate unrelated method arguments;
-* call external services;
-* produce different results based on external conditions.
-
-Those behaviors may be undesirable for other reasons, but they are not automatically mutations of the verified state graph.
-
-The central question remains:
-
-> Can this execution mutate verified instance or class state?
-
----
-
-## 26. Immutability Is Not Thread Safety
+## 34. Immutability Is Not Thread Safety
 
 Successful verification does not automatically prove:
 
-* safe publication of ordinary instances;
-* absence of data races in unrelated state;
-* atomicity of compound operations;
-* method-level thread safety;
-* lock correctness;
-* linearizability;
-* safe iteration;
-* correct synchronization.
+- safe publication;
+- absence of unrelated data races;
+- atomicity;
+- linearizability;
+- lock correctness;
+- method-level thread safety;
+- safe iteration under concurrent access.
 
-Because the project does not require instance fields to be final, it must not claim Java Memory Model guarantees that depend on final-field semantics.
+Because non-final fields may pass, the checker must not claim Java Memory Model
+guarantees that depend on final-field semantics.
 
 Therefore:
 
@@ -1481,56 +2081,75 @@ and:
 
 ```text
 verified immutable
-≠ general thread-safe design
+≠ general thread safety
 ```
 
-Users remain responsible for correct publication and concurrency architecture.
+Users remain responsible for publication and concurrency architecture.
 
 ---
 
-## 27. Records Are Not Automatically Immutable
+## 35. No Source or Bytecode Rewriting
 
-A record is not immutable merely because its component references are final.
+The checker must not silently:
 
-Example:
+- add `final`;
+- generate defensive copies;
+- replace collections;
+- rewrite accessors;
+- change constructors;
+- inject guards;
+- rewrite static initializers;
+- transform user bytecode;
+- make invalid source valid.
 
-```java
-record Names(List<String> values) {}
-```
-
-The generated accessor exposes the list:
-
-```java
-names.values().add("Alice");
-```
-
-Therefore:
+Its responsibility is:
 
 ```text
-record
-≠ immutable
+analyze
+→ prove or reject
+→ explain
 ```
 
-An ordinary class may encapsulate mutable implementation state more strongly than a record.
+not:
 
-Records remain unsupported in V1 and must be handled explicitly in V2.
+```text
+rewrite code until it satisfies the checker
+```
 
 ---
 
-## 28. Diagnostics
+## 36. No Runtime Enforcement Requirement
+
+The guarantee is established at compile time.
+
+The checker must not require:
+
+- runtime agents;
+- proxies;
+- interception;
+- runtime mutation tracking;
+- runtime guards;
+- generated runtime subclasses.
+
+Runtime support may be introduced only for a separate reviewed purpose and must
+not replace compile-time proof.
+
+---
+
+## 37. Diagnostics
 
 Diagnostics are part of the product.
 
-A failure should identify, where possible:
+A useful diagnostic should identify, where possible:
 
-1. the annotated root type;
-2. whether the path enters instance or static state;
-3. the complete reference path;
-4. the relevant method or initialization context;
-5. the mutation or escape operation;
+1. the annotated root;
+2. the complete reference path;
+3. whether the path enters instance or static state;
+4. the relevant executable or initialization context;
+5. the mutation, alias, or escape;
 6. why proof failed.
 
-Preferred instance path:
+Preferred ordinary path:
 
 ```text
 Person.address
@@ -1544,27 +2163,24 @@ Preferred static path:
 ```text
 Registry.<static>.METADATA
   -> Metadata.name
-  -> write in Metadata.rename() occurs after class initialization
+  -> write occurs after class initialization
 ```
 
-Preferred superclass path:
+Preferred collection path:
 
 ```text
-Customer.<superclass>
-  -> Party.<static>.revision
-  -> write in Party.incrementRevision() occurs after class initialization
+Order.lines
+  -> element
+  -> Line.price
+  -> mutation in Line.changePrice()
 ```
 
-Diagnostics should distinguish:
+Preferred record path:
 
 ```text
-outside instance construction
-```
-
-from:
-
-```text
-after class initialization
+Order.customer
+  -> CustomerRecord.address
+  -> generated accessor exposes mutable retained state
 ```
 
 Avoid generic messages such as:
@@ -1575,16 +2191,15 @@ type is not immutable
 
 when a precise proof path is available.
 
----
+### 37.1 Path conventions
 
-## 29. Diagnostic Path Conventions
+Use deterministic notation.
 
-Use consistent path notation.
-
-Instance field:
+Instance field or record component:
 
 ```text
 Type.field
+Type.component
 ```
 
 Static field:
@@ -1593,19 +2208,13 @@ Static field:
 Type.<static>.FIELD
 ```
 
-Superclass edge:
+Superclass:
 
 ```text
 Child.<superclass> -> Parent.field
 ```
 
-Static superclass state:
-
-```text
-Child.<superclass> -> Parent.<static>.FIELD
-```
-
-Container element:
+Collection element:
 
 ```text
 Order.lines -> element -> Line.price
@@ -1623,134 +2232,68 @@ Map value:
 Registry.entries -> value -> Entry.state
 ```
 
-Path rendering must be deterministic.
+Array element:
+
+```text
+Order.lines -> array-element -> Line.price
+```
+
+### 37.2 Diagnostic identifiers
+
+Stable identifiers such as `IC000` through `IC006` may be maintained as product
+behavior without becoming Java public API.
+
+Identifiers must not be repurposed incompatibly without a reviewed decision.
 
 ---
 
-## 30. Determinism
+## 38. Determinism
 
 Given the same:
 
-* source;
-* dependencies;
-* compiler version;
-* checker version;
-* configuration;
+- source;
+- dependency versions;
+- checker version;
+- compiler version;
+- configuration;
 
-the verification result must not depend on:
+the result must not depend on:
 
-* hash iteration order;
-* traversal timing;
-* machine-specific state;
-* network access;
-* nondeterministic heuristics;
-* thread scheduling.
+- hash iteration order;
+- traversal timing;
+- network access;
+- machine-specific state;
+- thread scheduling;
+- nondeterministic heuristics.
 
-Diagnostics must have deterministic ordering.
+Diagnostics must be emitted in deterministic order.
 
-Shared graph nodes may use a canonical deterministic path, but the checker must never lose the fact that a violation exists.
+Analysis must not require network access.
 
 ---
 
-## 31. The Checker Must Not Modify User Code
+## 39. Documentation Accuracy
 
-`immutability-checker` is a checker.
+README, Javadocs, Maven metadata, website copy, changelog, release notes, GitHub
+description, issues, and examples must describe implemented behavior accurately.
 
-It is not a source transformation framework.
+The internal target contract may be broader than a technical preview.
 
-It must not silently:
-
-* add `final`;
-* generate defensive copies;
-* replace collections;
-* rewrite methods;
-* inject guards;
-* generate accessors;
-* change constructors;
-* rewrite static initializers;
-* alter bytecode to enforce immutability.
-
-Its responsibility is:
+Public documentation must clearly distinguish:
 
 ```text
-analyze
-→ prove or reject
-→ explain
+the intended V1 semantic model
 ```
 
-not:
+from:
 
 ```text
-rewrite code until it passes
+the capability implemented by the current release
 ```
 
----
+Do not claim support for a feature until it is implemented and tested.
 
-## 32. No Runtime Enforcement Dependency
-
-The guarantee is established at compile time.
-
-The checker must not depend on:
-
-* runtime agents;
-* proxies;
-* interception;
-* mutation tracking;
-* runtime guards;
-
-to make a mutable object appear immutable.
-
-Runtime support may be added only for a clearly separate purpose and must not replace compile-time verification.
-
----
-
-## 33. Public API Discipline
-
-The supported public API must remain minimal.
-
-The primary supported API is:
-
-```java
-io.github.jutil.immutability.Immutable
-```
-
-Internal analysis types are not supported public API even when Java service-loading requirements make a processor class technically public.
-
-Do not add:
-
-* annotation properties;
-* trust annotations;
-* suppression annotations;
-* `@Mutable`;
-* ignore annotations;
-* runtime configuration APIs;
-
-without a concrete, reviewed semantic requirement.
-
-An escape hatch must never silently weaken the meaning of successful `@Immutable` verification.
-
----
-
-## 34. Documentation Accuracy
-
-README, Javadocs, Maven metadata, website copy, changelog, release notes, examples, issues, and social descriptions must match the implementation.
-
-Do not claim that the current implementation supports:
-
-* ownership;
-* collections;
-* arrays;
-* aliases;
-* escape analysis;
-* bytecode analysis;
-* cross-module metadata;
-* records;
-* method effects;
-* static state;
-
-until those capabilities are actually implemented and verified.
-
-Avoid unsupported claims such as:
+Do not claim:
 
 ```text
 proves every Java object immutable
@@ -1765,204 +2308,247 @@ guarantees safe publication
 ```
 
 ```text
-analyzes arbitrary native or reflective behavior
+analyzes arbitrary external bytecode
 ```
 
-The normative contract may describe the project’s target semantics, but current-status documentation must clearly state the implemented proof capability.
+```text
+protects against reflection or native mutation
+```
+
+`PROJECT_INVARIANTS.md` is not the primary consumer document and does not need a
+prominent README link.
 
 ---
 
-## 35. Evolution Rule
+## 40. Packaging and Publication Invariants
 
-The checker’s analysis may become more precise.
+Every published module must have complete Maven Central metadata.
 
-Future versions may add:
+Both published artifacts must include:
 
-* stronger ownership analysis;
-* exact-allocation analysis;
-* collection and array models;
-* call graphs;
-* escape analysis;
-* bytecode analysis;
-* proof metadata;
-* record support;
-* sealed-hierarchy analysis;
-* richer diagnostics.
+- project name;
+- accurate description;
+- project URL;
+- organization;
+- Apache 2.0 license metadata;
+- developer metadata;
+- issue management;
+- SCM connection;
+- SCM developer connection;
+- SCM URL;
+- exact release tag;
+- UTF-8 source and reporting encodings;
+- source JAR;
+- Javadoc JAR;
+- signatures for real publication;
+- deterministic artifact contents where practical.
 
-Such improvements may make previously rejected code pass.
+The API artifact must contain only its intended annotation class.
 
-They must not weaken the meaning of successful verification.
+The processor artifact must contain the processor and internal engine but not a
+duplicate API class.
 
-The invariant is:
+Neither artifact may contain:
 
-```text
-proof capability may grow
-```
+- tests;
+- JUnit;
+- Surefire or Failsafe internals;
+- `tools.jar`;
+- credentials;
+- local filesystem paths;
+- `AGENTS.md`;
+- `PROJECT_INVARIANTS.md`.
 
-but:
+No published artifact may depend on the unpublished build aggregator.
 
-```text
-@Immutable must not gradually mean less
-```
-
----
-
-## 36. Tests Are Evidence, Not the Contract
-
-Tests protect these invariants.
-
-Tests do not define them.
-
-If a test contradicts this file, the test is wrong.
-
-If implementation contradicts this file, the implementation is wrong.
-
-If documentation contradicts this file, the documentation is wrong.
-
-An AI agent must never resolve a conflict by changing this file.
-
-It must:
-
-```text
-1. keep PROJECT_INVARIANTS.md unchanged;
-2. report the conflict;
-3. correct implementation, tests, or documentation as appropriate.
-```
+No application runtime dependency may be introduced without an explicit human
+decision.
 
 ---
 
-## 37. Required Test Categories
+## 41. Test Requirements
 
-Significant semantic behavior requires focused positive and negative tests.
+Tests are evidence for these invariants.
 
-The suite must eventually cover at least:
+Tests do not define the contract.
 
-### Instance state
+If a test conflicts with this file, the test is wrong.
 
-* direct constructor writes;
-* post-construction writes;
-* constructor-only helpers;
-* instance escape;
-* instance ownership;
-* defensive copies;
-* nested custom objects;
-* nested containers;
-* cyclic graphs;
-* inheritance;
-* polymorphism.
+If implementation conflicts with this file, the implementation is wrong.
 
-### Static class state
+If documentation conflicts with this file, the documentation is wrong.
 
-* static field initialization;
-* static initializer blocks;
-* post-class-initialization writes;
-* static-initializer-only helpers;
-* static reference ownership;
-* static escape;
-* static containers;
-* static nested objects;
-* static cycles;
-* static superclass state;
-* recursively referenced class state.
-
-### Boundaries
-
-* unknown external types;
-* generated sources;
-* incremental compilation;
-* cross-module metadata;
-* deterministic diagnostics;
-* packaged service discovery;
-* supported JDK versions;
-* class-file compatibility.
-
-Every important rule should have:
+Every significant semantic rule should have:
 
 ```text
-one case that must pass
+a focused case that must pass
 +
-one corresponding case that must fail
+a corresponding focused case that must fail
 ```
+
+### 41.1 Ordinary class tests
+
+Include:
+
+- non-final state that freezes correctly;
+- direct mutation;
+- recursive objects;
+- cycles;
+- inheritance;
+- static state;
+- enclosing and captured state;
+- polymorphism;
+- deterministic diagnostics.
+
+### 41.2 Collection and map tests
+
+Include:
+
+- fresh ownership;
+- copy constructors;
+- external aliases;
+- item/key/value recursion;
+- construction mutation;
+- post-freeze mutation;
+- raw and unchecked flows;
+- views;
+- iterators;
+- callbacks;
+- control-flow joins;
+- nested containers;
+- static containers.
+
+### 41.3 Array tests
+
+Include:
+
+- primitive arrays;
+- object arrays;
+- cloning;
+- copying;
+- element recursion;
+- construction writes;
+- post-freeze writes;
+- direct escape;
+- fresh-copy return;
+- nested arrays and containers;
+- static arrays.
+
+### 41.4 Record tests
+
+Include:
+
+- generated canonical constructors;
+- explicit canonical constructors;
+- compact constructors;
+- auxiliary constructors;
+- primitive components;
+- semantic-leaf components;
+- ordinary custom-object components;
+- record-to-record recursion;
+- collection and array components;
+- generated accessor exposure;
+- defensive-copy accessors;
+- generated method models;
+- explicit overrides;
+- static record state;
+- Java 8 dormant behavior;
+- record-capable compiler behavior.
+
+### 41.5 Artifact-boundary tests
+
+Verify:
+
+- API JAR contains only `Immutable.class`;
+- API JAR contains no processor service;
+- processor JAR contains no duplicate annotation class;
+- service discovery works from the processor JAR;
+- processor discovery does not occur from the API JAR alone;
+- API and processor versions match;
+- both artifacts use class-file major version 52;
+- neither JAR contains policy files;
+- neither JAR has unintended runtime dependencies;
+- external Maven consumers compile successfully.
+
+### 41.6 Compiler matrix
+
+The complete reactor must be tested on:
+
+- Java 8;
+- a record-capable LTS JDK when record support is implemented;
+- the newest supported JDK.
 
 ---
 
-## 38. AI-Agent Compliance Rules
+## 42. AI-Agent Compliance
 
 Every AI coding or reviewing agent must:
 
-1. read this file completely before repository work;
-2. treat it as normative;
-3. leave it unchanged;
-4. preserve fail-closed behavior;
-5. distinguish instance state from class state;
-6. apply the correct freeze boundary;
-7. analyze recursively rather than using field-style heuristics;
-8. avoid treating `final` as proof;
-9. avoid treating annotation presence as proof;
+1. read this file completely;
+2. leave it unchanged;
+3. preserve fail-closed behavior;
+4. distinguish instance state from class state;
+5. apply the correct freeze boundary;
+6. preserve the API/processor artifact split;
+7. keep the supported public API minimal;
+8. analyze recursively rather than using superficial style rules;
+9. avoid treating `final` as proof;
 10. avoid treating records as automatically immutable;
-11. avoid treating static fields as irrelevant;
-12. avoid treating no current caller as proof of safety;
-13. avoid weakening diagnostics or tests to make code pass.
+11. avoid treating annotation presence as proof;
+12. avoid treating absent current callers as proof of safety;
+13. avoid ignoring static state;
+14. avoid assuming defensive copies are deep;
+15. avoid assuming method names prove effects;
+16. avoid increasing acceptance by weakening the guarantee.
 
 An AI agent must not:
 
-* modify this file;
-* remove inconvenient invariants;
-* reinterpret unknown behavior as safe;
-* ignore declared static state;
-* ignore nested reachable state;
-* assume collections are immutable because references are final;
-* assume a defensive copy is deep;
-* assume a method is read-only from its name;
-* sacrifice correctness merely to increase acceptance rate.
+- modify this file;
+- package this file;
+- duplicate the annotation into the processor JAR;
+- move processor implementation into the API JAR;
+- introduce a runtime dependency without approval;
+- silently assume unknown behavior is safe;
+- weaken tests to make implementation pass;
+- rewrite public claims beyond implemented capability.
 
-If a requested implementation conflicts with this file, the agent must report the exact conflict to the human maintainer.
+When a requested change conflicts with this file, the agent must report the exact
+conflict to the human maintainer.
 
 ---
 
-## 39. Core Pass Examples
+## 43. Core Pass Examples
 
-### Ordinary class with non-final instance state
+### 43.1 Ordinary class with non-final state
 
 ```java
 @Immutable
 final class Currency {
-
     private String code;
 
     Currency(String code) {
         this.code = code;
     }
-
-    String code() {
-        return code;
-    }
 }
 ```
 
-### Class with non-final static state initialized once
+### 43.2 Static state initialized once
 
 ```java
 @Immutable
 final class Configuration {
-
     private static String mode;
 
     static {
         mode = "production";
     }
-
-    static String mode() {
-        return mode;
-    }
 }
 ```
 
-### Recursive custom object
+### 43.3 Recursive custom object
 
 ```java
 final class Address {
-
     private String city;
 
     Address(String city) {
@@ -1972,7 +2558,6 @@ final class Address {
 
 @Immutable
 final class Person {
-
     private Address address;
 
     Person(Address address) {
@@ -1981,44 +2566,57 @@ final class Person {
 }
 ```
 
-This may pass only when aliases and polymorphism are proven safe.
+This passes only when alias and runtime-type safety are proven.
 
-### Owned list of custom objects
+### 43.4 Owned collection
 
 ```java
-final class Line {
-
-    private String product;
-
-    Line(String product) {
-        this.product = product;
-    }
-}
-
 @Immutable
-final class Order {
+final class Names {
+    private List<String> values;
 
-    private List<Line> lines;
+    Names(List<String> source) {
+        values = new ArrayList<>(source);
+    }
 
-    Order(List<Line> source) {
-        this.lines = new ArrayList<>(source);
+    String get(int index) {
+        return values.get(index);
     }
 }
 ```
 
-This may pass only when:
+### 43.5 Immutable record value
 
-* the list container is safely owned;
-* each `Line` is immutable or safely owned;
-* no unsafe aliases remain;
-* no list or element escape exists;
-* no post-freeze mutation path exists.
+```java
+@Immutable
+record Identifier(String value) {
+}
+```
+
+### 43.6 Record with owned collection and defensive accessor
+
+```java
+@Immutable
+record Names(List<String> values) {
+    Names {
+        values = new ArrayList<>(values);
+    }
+
+    @Override
+    public List<String> values() {
+        return new ArrayList<>(values);
+    }
+}
+```
+
+This passes only when constructor ownership, item proof, and accessor copying are
+all established.
 
 ---
 
-## 40. Core Failure Examples
+## 44. Core Failure Examples
 
-### Post-construction instance mutation
+### Post-construction mutation
 
 ```java
 void rename(String code) {
@@ -2026,7 +2624,7 @@ void rename(String code) {
 }
 ```
 
-### Post-class-initialization static mutation
+### Post-class-initialization mutation
 
 ```java
 static void changeMode(String mode) {
@@ -2034,16 +2632,10 @@ static void changeMode(String mode) {
 }
 ```
 
-### External static writability
+### Externally writable static state
 
 ```java
 public static String mode;
-```
-
-### Mutable static object exposed
-
-```java
-public static final List<String> VALUES = new ArrayList<>();
 ```
 
 ### Constructor alias retained
@@ -2054,14 +2646,7 @@ Names(List<String> values) {
 }
 ```
 
-### Static external alias retained
-
-```java
-private static final List<String> VALUES =
-        ExternalSource.mutableValues();
-```
-
-### Instance reference escapes
+### Mutable collection escapes
 
 ```java
 List<String> values() {
@@ -2069,7 +2654,7 @@ List<String> values() {
 }
 ```
 
-### Static reference escapes
+### Mutable static collection escapes
 
 ```java
 static List<String> values() {
@@ -2077,48 +2662,84 @@ static List<String> values() {
 }
 ```
 
-### Deep nested mutation
+### Mutable array escapes
 
 ```java
-Person.address
-    -> Address.country
-    -> Country.rename(...)
+byte[] values() {
+    return values;
+}
 ```
 
-### Static state in referenced class mutates
+### Generated record accessor exposes mutable state
 
 ```java
+@Immutable
+record Names(List<String> values) {
+}
+```
+
+### Deep nested mutation
+
+```text
+Order.lines
+    -> element
+    -> Line.price
+    -> mutation in Line.changePrice()
+```
+
+### Static state of a recursively referenced type mutates
+
+```text
 Person.address
     -> Address.<static>.revision
-    -> Address.incrementRevision()
+    -> mutation in Address.revise()
 ```
 
 ---
 
-## 41. Project Identity
+## 45. Final Project Identity
 
-The project’s identity is:
+The project identity is:
 
-> A conservative compile-time Java immutability checker that proves that neither verified instance state nor verified declared static class state can mutate after their respective initialization boundaries.
+> A conservative compile-time Java checker that proves that verified instance
+> state, record component state, and declared static class state cannot legally
+> mutate after their respective initialization boundaries.
 
-The defining principles are:
+Its consumer experience is intentionally small:
+
+```text
+one source-retained annotation
++
+one configured annotation processor
++
+actionable compiler diagnostics
+```
+
+Its internal implementation may be large because the complexity belongs in the
+checker, not in consumer code.
+
+The final principles are:
 
 ```text
 Do not ask whether the fields look immutable.
 
-Prove that the state cannot mutate.
+Prove that the verified state cannot mutate.
 ```
-
-and:
 
 ```text
 Do not check only the root object.
 
-Follow the complete verified state graph.
+Follow the complete supported state graph.
 ```
 
-and:
+```text
+Do not ignore declared static state.
+
+Class state is verified state.
+```
 
 ```text
-Static class state is verified state.
+Do not expose compiler implementation as consumer API.
+
+Clients interact with @Immutable.
 ```

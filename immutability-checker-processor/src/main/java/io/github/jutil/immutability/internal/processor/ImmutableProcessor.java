@@ -56,6 +56,12 @@ public final class ImmutableProcessor extends AbstractProcessor {
     private DirectStateVerifier verifier;
     private boolean deferUntilAnalyze;
 
+    /**
+     * Creates the service provider used by JSR 269 processor discovery.
+     */
+    public ImmutableProcessor() {
+    }
+
     @Override
     public synchronized void init(ProcessingEnvironment processingEnvironment) {
         super.init(processingEnvironment);

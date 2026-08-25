@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Separated the source-retained annotation API as
+  `io.github.j-util:immutability-checker:0.1.0` and the JSR 269 implementation as
+  `io.github.j-util:immutability-checker-processor:0.1.0`, built by the
+  unpublished `immutability-checker-build` reactor aggregator.
 - Added the source-retained `@Immutable` annotation, JSR 269 processor
   discovery, and cycle-safe recursive verification of ordinary top-level and
   static member classes, their declared instance and static state, and
@@ -26,9 +30,10 @@ All notable changes to this project will be documented in this file.
 
 - Added complete Temurin JDK 8 and JDK 26 build verification while producing
   Java 8-compatible class files with no runtime dependencies.
-- Added packaged-artifact verification for the license, manifest, processor
-  service registration and discovery, Java 8 class-file versions, and positive
-  and negative compilation fixtures.
+- Added packaged-artifact verification for the separate API and processor JAR
+  boundaries, licenses, manifests, processor service registration and
+  discovery, matching versions, Java 8 class-file versions, policy-file
+  exclusion, and positive and negative compilation fixtures.
 
 ### Limitations
 

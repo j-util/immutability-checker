@@ -14,8 +14,11 @@ closed: compilation is rejected rather than the behavior being assumed safe.
 
 ## Use it
 
-The artifact has no runtime dependencies. It must be available both to source
-that uses `@Immutable` and to the annotation-processing toolchain.
+The annotation API and processor are separate artifacts with no application
+runtime dependencies. Use `immutability-checker` as a provided or compile-only
+dependency and configure the matching `immutability-checker-processor` version
+on the compiler's annotation-processor path. Annotation presence without the
+processor running is not verification.
 
 Maven:
 
@@ -38,7 +41,7 @@ Maven:
                 <annotationProcessorPaths>
                     <path>
                         <groupId>io.github.j-util</groupId>
-                        <artifactId>immutability-checker</artifactId>
+                        <artifactId>immutability-checker-processor</artifactId>
                         <version>0.1.0</version>
                     </path>
                 </annotationProcessorPaths>
@@ -53,7 +56,7 @@ Gradle:
 ```groovy
 dependencies {
     compileOnly 'io.github.j-util:immutability-checker:0.1.0'
-    annotationProcessor 'io.github.j-util:immutability-checker:0.1.0'
+    annotationProcessor 'io.github.j-util:immutability-checker-processor:0.1.0'
 }
 ```
 
@@ -102,9 +105,9 @@ fails with `IC006`.
 | Deferred low-level mutation mechanisms | Outside the 0.1.0 guarantee |
 
 Record verification is intended for the eventual 1.0.0 product line. The same
-artifact remains usable on Java 8: it contains Java 8-compatible class files,
-while record-specific analysis will run only on a record-capable compiler once
-that feature is implemented.
+processor artifact remains usable on Java 8: it contains Java 8-compatible
+class files, while record-specific analysis will run only on a record-capable
+compiler once that feature is implemented.
 
 ## Supported proof domain
 
@@ -211,19 +214,23 @@ Diagnostics include deterministic paths such as
 ./mvnw --batch-mode --no-transfer-progress clean verify
 ```
 
-The build creates the main, source, and Javadoc JARs and runs a packaged-artifact
-integration test. That test verifies Java 8 class-file major version 52 for all
-packaged classes, processor service discovery, manifest metadata, license
-inclusion, and positive and negative fixture compilation.
+The build creates main, source, and Javadoc JARs for both published artifacts
+and runs a packaged-artifact integration test. That test verifies that the API
+JAR contains only `Immutable.class`, cannot discover a processor on its own,
+and has no processor service entry. It also verifies that the processor JAR has
+the service provider and internal engine without a duplicate annotation class.
+Both artifact versions, automatic module names, licenses, Java 8 class-file
+major version 52, policy-file exclusion, and positive and negative fixture
+compilation are checked.
 
 On Temurin JDK 8, Maven activates one build-only profile for the JDK's own
 `tools.jar`. It is optional and system-scoped, is not packaged, and is not a
 runtime or transitive consumer dependency. Modular JDKs do not activate those
 profiles.
 
-The complete semantic contract and future direction are documented in
-[PROJECT_INVARIANTS.md](PROJECT_INVARIANTS.md). Current release claims are
-intentionally limited to the 0.1.0 proof domain described here.
+Current release claims are intentionally limited to the 0.1.0 proof domain
+documented here and in the `@Immutable` Javadocs, changelog, release notes, and
+compiler diagnostics.
 
 ## License
 
