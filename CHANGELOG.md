@@ -4,51 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- Restored the complete Temurin JDK 8 build by exposing its compiler-owned
-  `tools.jar` only in JDK-8 build/test profiles, without a runtime dependency.
-- Joined collection alias proofs conservatively across structured control flow,
-  resolved assignment-expression values through collection escape checks, and
-  rejected modern collection binding-pattern aliases fail closed with `IC005`.
-- Closed collection reference-flow soundness gaps for field-declaration storage,
-  raw and unchecked insertion/copy paths, multi-target conditionals, and modern
-  switch-expression flows while preserving Java 8 artifact compatibility.
-- Added owned `Collection`, `List`, `Set`, and `Map` verification for exact
-  fresh `ArrayList`, `HashSet`, `LinkedHashSet`, `HashMap`, and `LinkedHashMap`
-  allocations, including supported copy constructors.
-- Added recursive collection-element and map-key/value proof with deterministic
-  `element`, `key`, and `value` diagnostic paths.
-- Added supported construction and class-initialization collection mutation,
-  simple local-alias tracking, and post-freeze structural mutation diagnostics.
-- Added collection-specific alias, return, argument, field/array storage,
-  iterator, view, stream, and unknown-operation escape rejection.
-- Documented intentional fail-closed limits for nested collections, unsupported
-  implementations, wrappers, callbacks, generic shapes, and ownership origins.
-- Added recursive verification of declared static state for annotated roots,
-  recursively analyzed source classes, and source superclasses.
-- Added the class-initialization freeze boundary, allowing direct static writes
-  only in static field initializers and static initializer blocks.
-- Added static-field diagnostic paths and regression coverage for external
-  writability, post-initialization writes, recursion, cycles, and inheritance.
-- Documented the conservative limitation that static-initialization-only helper
-  reachability is not yet analyzed.
-- Added cycle-safe recursive retained-state verification for source-available
-  ordinary classes, their source superclasses, and further source field types.
-- Added deterministic complete reference paths and fail-closed diagnostics for
-  unavailable source, unsupported references, and unresolved runtime subtypes.
-- Deferred record verification to V2 and rejected annotated records with `IC001`.
-- Added the initial single-module Maven project and Java 8-compatible artifact.
-- Added the source-retained `@Immutable` annotation and JSR 269 processor discovery.
-- Added sound direct-state verification with the construction freeze boundary.
-- Added fail-closed reference-state and inherited-state proof boundaries.
+## [0.1.0] - 2026-08-25
+
+### Added
+
+- Added the source-retained `@Immutable` annotation, JSR 269 processor
+  discovery, and cycle-safe recursive verification of ordinary top-level and
+  static member classes, their declared instance and static state, and
+  source-available superclasses.
+- Added explicit immutable JDK leaf models and deterministic complete paths
+  through recursively verified source classes.
+- Added owned `Collection`, `List`, `Set`, and `Map` fields backed by exact fresh
+  `ArrayList`, `HashSet`, `LinkedHashSet`, `HashMap`, or `LinkedHashMap`
+  allocations, including supported shallow copy constructors.
+- Added recursive proof of collection elements and map keys and values, supported
+  initialization-phase structural mutation, and collection-specific alias and
+  escape checks.
 - Added deterministic `IC000` through `IC006` diagnostics.
-- Added JDK 8 and JDK 26 continuous integration.
-- Added packaged-artifact verification for class-file versions, manifest metadata,
-  license and service entries, processor discovery, and accepting/rejecting fixtures.
-- Removed subclassable `BigInteger` and `BigDecimal` from the trusted immutable
-  leaf set.
-- Added symbol-resolved `RootType.this.field` writes to supported direct
-  construction contexts.
-- Clarified the direct source-level write model and its indirect-mutation proof
-  boundary.
-- Added regressions for unproven numeric references, qualified root `this`, and
-  conservatively rejected deferred, foreign, casted, and aliased receivers.
+
+### Verification
+
+- Added complete Temurin JDK 8 and JDK 26 build verification while producing
+  Java 8-compatible class files with no runtime dependencies.
+- Added packaged-artifact verification for the license, manifest, processor
+  service registration and discovery, Java 8 class-file versions, and positive
+  and negative compilation fixtures.
+
+### Limitations
+
+- This release is a technical preview whose proof is sound only within the
+  documented domain; unsupported state or behavior fails closed.
+- Records, arrays, nested collection containers, broader collection
+  implementations and wrappers, general interprocedural method and alias
+  analysis, arbitrary allocation analysis, bytecode analysis, compiled
+  dependency proof, and cross-module metadata are not implemented in 0.1.0.
+- Safe publication, general thread safety or purity, and low-level mutation
+  through reflection, `Unsafe`, `VarHandle`, JNI, agents, or instrumentation are
+  outside the guarantee.
