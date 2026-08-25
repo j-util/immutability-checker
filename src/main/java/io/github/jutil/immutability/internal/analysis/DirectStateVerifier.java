@@ -4,6 +4,7 @@ import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 
 import javax.annotation.processing.Messager;
+import javax.lang.model.SourceVersion;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
@@ -91,7 +92,11 @@ public final class DirectStateVerifier {
     private void emit(List<ProofFailure> failures) {
         failures.sort(ProofFailure.SOURCE_ORDER);
         for (ProofFailure failure : failures) {
-            if (failure.getTree() != null && failure.getCompilationUnit() != null) {
+            // javac 8 can collapse multiple late tree diagnostics at one source
+            // position; the messager preserves every deterministically sorted proof.
+            if (SourceVersion.latestSupported() != SourceVersion.RELEASE_8
+                    && failure.getTree() != null
+                    && failure.getCompilationUnit() != null) {
                 trees.printMessage(
                         Diagnostic.Kind.ERROR,
                         failure.getMessage(),

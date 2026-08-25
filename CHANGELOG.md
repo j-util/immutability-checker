@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Restored the complete Temurin JDK 8 build by exposing its compiler-owned
+  `tools.jar` only in JDK-8 build/test profiles, without a runtime dependency.
+- Joined collection alias proofs conservatively across structured control flow,
+  resolved assignment-expression values through collection escape checks, and
+  rejected modern collection binding-pattern aliases fail closed with `IC005`.
 - Closed collection reference-flow soundness gaps for field-declaration storage,
   raw and unchecked insertion/copy paths, multi-target conditionals, and modern
   switch-expression flows while preserving Java 8 artifact compatibility.

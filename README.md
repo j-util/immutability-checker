@@ -221,9 +221,10 @@ arguments, `addAll` sources, and `putAll` sources must preserve the proved
 element, key, and value roles. Raw receivers, raw copy or bulk sources, and
 unchecked collection aliases fail with `IC005`; correctness does not depend on
 client warning settings. The same mutator calls produce `IC006` after freeze,
-including calls through a simple local alias. Callback mutators such as
-`removeIf`, `replaceAll`, `compute*`, and `merge` fail closed with `IC005`
-because callback effects and escapes are not modeled yet.
+including calls through local aliases conservatively joined across structured
+control flow. Callback mutators such as `removeIf`, `replaceAll`, `compute*`,
+and `merge` fail closed with `IC005` because callback effects and escapes are
+not modeled yet.
 
 The explicit read model includes `size`, `isEmpty`, containment checks, indexed
 list lookup, and direct map lookup. Returning an element from `List.get` or a
@@ -238,10 +239,18 @@ list-iterator, sublist, map-view, stream, parallel-stream, and spliterator
 creation also fails closed because those objects may alias retained state. This
 is collection-specific alias and escape analysis, not a claim of general
 interprocedural escape analysis. Field-declaration storage is checked throughout
-the containing nest, including nested, local, and anonymous classes. Conditional
-expressions retain every possible collection target in deterministic branch
-order; an operation must be legal for all of them. Collection reference flows
-through modern switch expressions and `yield` fail closed on capable compilers.
+the containing nest, including nested, local, and anonymous classes. Alias state
+is joined in deterministic source order across conditional expressions,
+short-circuit expressions, if/else statements, switch statements, loops, and
+try/catch/finally. A path that does not assign an alias preserves its incoming
+targets, loops include the zero-iteration path, and an operation must be legal
+for every retained target at the join. Assignment expressions contribute the
+proof of their right-hand expression to returns, arguments, array initializers,
+conditional and lambda results, and further nested assignments. Collection
+reference flows through modern switch expressions and `yield` fail closed on
+capable compilers. Binding patterns that may introduce an alias to retained
+collection state also fail closed with `IC005`; no Java 9+ compiler-tree API is
+linked into the Java 8-compatible artifact.
 
 ### Fail-closed limitations
 
@@ -336,6 +345,14 @@ supported `javax.annotation.processing`, `javax.lang.model`, `javax.tools`, and
 `com.sun.source` compiler APIs. The CI matrix runs the complete build on Temurin
 JDK 8 and JDK 26. On record-capable compilers, annotated records are rejected as
 intentionally deferred to V2.
+
+On JDK 8, Maven activates a build-only profile that places the JDK's own
+`tools.jar` on the compile and test classpaths. Both common `${java.home}/lib`
+and JRE-style `${java.home}/../lib` layouts are recognized. The profiles are
+inactive on modular JDKs; their system dependency is optional and non-transitive
+to consumers, and `tools.jar` is not packaged in the library JAR. On javac 8,
+processor verification waits for completed compiler analysis so method-body
+symbols are available before proof scanning.
 
 ## Build
 

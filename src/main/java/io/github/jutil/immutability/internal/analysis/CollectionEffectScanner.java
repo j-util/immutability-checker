@@ -1,11 +1,19 @@
 package io.github.jutil.immutability.internal.analysis;
 
 import com.sun.source.tree.AssignmentTree;
+import com.sun.source.tree.BinaryTree;
 import com.sun.source.tree.BlockTree;
+import com.sun.source.tree.CaseTree;
+import com.sun.source.tree.CatchTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.ConditionalExpressionTree;
+import com.sun.source.tree.DoWhileLoopTree;
+import com.sun.source.tree.EnhancedForLoopTree;
 import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.ForLoopTree;
 import com.sun.source.tree.IdentifierTree;
+import com.sun.source.tree.IfTree;
+import com.sun.source.tree.InstanceOfTree;
 import com.sun.source.tree.LambdaExpressionTree;
 import com.sun.source.tree.MemberReferenceTree;
 import com.sun.source.tree.MemberSelectTree;
@@ -15,9 +23,12 @@ import com.sun.source.tree.NewArrayTree;
 import com.sun.source.tree.NewClassTree;
 import com.sun.source.tree.ParenthesizedTree;
 import com.sun.source.tree.ReturnTree;
+import com.sun.source.tree.SwitchTree;
 import com.sun.source.tree.Tree;
+import com.sun.source.tree.TryTree;
 import com.sun.source.tree.TypeCastTree;
 import com.sun.source.tree.VariableTree;
+import com.sun.source.tree.WhileLoopTree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.TreeScanner;
@@ -36,7 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Checks collection operations, simple local aliases, and container escapes. */
+/** Checks collection operations, structured local aliases, and container escapes. */
 final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
 
     private enum Phase {
@@ -57,7 +68,9 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
 
     private Map<Element, Set<CollectionProof>> aliases =
             new LinkedHashMap<Element, Set<CollectionProof>>();
+    private Map<Element, Set<CollectionProof>> observedAliases;
     private final Set<Element> uncheckedCollectionAliases = new LinkedHashSet<Element>();
+    private final Set<String> reportedFailures = new LinkedHashSet<String>();
     private Phase phase = Phase.OTHER;
     private ExecutableElement executable;
     private String executableContext = "type body";
@@ -107,6 +120,19 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
     @Override
     public Void visitVariable(VariableTree node, Void unused) {
         Element element = trees.getElement(getCurrentPath());
+        Set<CollectionProof> bindingProofs = bindingPatternProofs();
+        if (!bindingProofs.isEmpty()) {
+            aliases.put(element, copyProofs(bindingProofs));
+            observeAliases();
+            for (CollectionProof proof : bindingProofs) {
+                addFailure(
+                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
+                        proof,
+                        node,
+                        "binding pattern may alias retained mutable collection state; "
+                                + "pattern provenance is not modeled precisely");
+            }
+        }
         if (node.getInitializer() == null) {
             recordGenericAliasFlow(element, null);
         }
@@ -207,6 +233,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
                 recordAlias(target, node.getExpression(), referenced, node);
                 aliases.put(target, copyProofs(referenced));
             }
+            observeAliases();
         } else {
             for (CollectionProof proof : referenced) {
                 if (proofs.get(target) == proof) {
@@ -220,6 +247,180 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
             }
         }
         return super.visitAssignment(node, unused);
+    }
+
+    @Override
+    public Void visitIf(IfTree node, Void unused) {
+        scan(node.getCondition(), unused);
+        Map<Element, Set<CollectionProof>> incoming = copyAliasState(aliases);
+        FlowResult thenFlow = scanFlow(incoming, new ScanAction() {
+            @Override
+            public Void scan() {
+                return CollectionEffectScanner.this.scan(node.getThenStatement(), unused);
+            }
+        });
+        FlowResult elseFlow = node.getElseStatement() == null
+                ? FlowResult.unchanged(incoming)
+                : scanFlow(incoming, new ScanAction() {
+                    @Override
+                    public Void scan() {
+                        return CollectionEffectScanner.this.scan(node.getElseStatement(), unused);
+                    }
+                });
+        aliases = mergeAliasStates(thenFlow.end, elseFlow.end);
+        observeAliases();
+        return null;
+    }
+
+    @Override
+    public Void visitConditionalExpression(ConditionalExpressionTree node, Void unused) {
+        scan(node.getCondition(), unused);
+        Map<Element, Set<CollectionProof>> incoming = copyAliasState(aliases);
+        FlowResult trueFlow = scanFlow(incoming, new ScanAction() {
+            @Override
+            public Void scan() {
+                return CollectionEffectScanner.this.scan(node.getTrueExpression(), unused);
+            }
+        });
+        FlowResult falseFlow = scanFlow(incoming, new ScanAction() {
+            @Override
+            public Void scan() {
+                return CollectionEffectScanner.this.scan(node.getFalseExpression(), unused);
+            }
+        });
+        aliases = mergeAliasStates(trueFlow.end, falseFlow.end);
+        observeAliases();
+        return null;
+    }
+
+    @Override
+    public Void visitBinary(BinaryTree node, Void unused) {
+        if (node.getKind() != Tree.Kind.CONDITIONAL_AND
+                && node.getKind() != Tree.Kind.CONDITIONAL_OR) {
+            return super.visitBinary(node, unused);
+        }
+        scan(node.getLeftOperand(), unused);
+        Map<Element, Set<CollectionProof>> shortCircuit = copyAliasState(aliases);
+        FlowResult evaluatedRight = scanFlow(shortCircuit, new ScanAction() {
+            @Override
+            public Void scan() {
+                return CollectionEffectScanner.this.scan(node.getRightOperand(), unused);
+            }
+        });
+        aliases = mergeAliasStates(shortCircuit, evaluatedRight.end);
+        observeAliases();
+        return null;
+    }
+
+    @Override
+    public Void visitSwitch(SwitchTree node, Void unused) {
+        scan(node.getExpression(), unused);
+        Map<Element, Set<CollectionProof>> incoming = copyAliasState(aliases);
+        Map<Element, Set<CollectionProof>> fallThrough = copyAliasState(incoming);
+        Map<Element, Set<CollectionProof>> joined = copyAliasState(incoming);
+        for (final CaseTree caseTree : node.getCases()) {
+            Map<Element, Set<CollectionProof>> caseEntry =
+                    mergeAliasStates(incoming, fallThrough);
+            FlowResult caseFlow = scanFlow(caseEntry, new ScanAction() {
+                @Override
+                public Void scan() {
+                    return CollectionEffectScanner.this.scan(caseTree, unused);
+                }
+            });
+            fallThrough = caseFlow.end;
+            mergeAliasStateInto(joined, caseFlow.observed);
+        }
+        aliases = joined;
+        observeAliases();
+        return null;
+    }
+
+    @Override
+    public Void visitForLoop(ForLoopTree node, Void unused) {
+        scan(node.getInitializer(), unused);
+        return scanLoop(new ScanAction() {
+            @Override
+            public Void scan() {
+                CollectionEffectScanner.this.scan(node.getCondition(), unused);
+                CollectionEffectScanner.this.scan(node.getStatement(), unused);
+                return CollectionEffectScanner.this.scan(node.getUpdate(), unused);
+            }
+        });
+    }
+
+    @Override
+    public Void visitEnhancedForLoop(EnhancedForLoopTree node, Void unused) {
+        scan(node.getExpression(), unused);
+        return scanLoop(new ScanAction() {
+            @Override
+            public Void scan() {
+                CollectionEffectScanner.this.scan(node.getVariable(), unused);
+                return CollectionEffectScanner.this.scan(node.getStatement(), unused);
+            }
+        });
+    }
+
+    @Override
+    public Void visitWhileLoop(WhileLoopTree node, Void unused) {
+        return scanLoop(new ScanAction() {
+            @Override
+            public Void scan() {
+                CollectionEffectScanner.this.scan(node.getCondition(), unused);
+                return CollectionEffectScanner.this.scan(node.getStatement(), unused);
+            }
+        });
+    }
+
+    @Override
+    public Void visitDoWhileLoop(DoWhileLoopTree node, Void unused) {
+        return scanLoop(new ScanAction() {
+            @Override
+            public Void scan() {
+                CollectionEffectScanner.this.scan(node.getStatement(), unused);
+                return CollectionEffectScanner.this.scan(node.getCondition(), unused);
+            }
+        });
+    }
+
+    @Override
+    public Void visitTry(TryTree node, Void unused) {
+        Map<Element, Set<CollectionProof>> beforeResources = copyAliasState(aliases);
+        scan(node.getResources(), unused);
+        Map<Element, Set<CollectionProof>> tryEntry = copyAliasState(aliases);
+        FlowResult tryFlow = scanFlow(tryEntry, new ScanAction() {
+            @Override
+            public Void scan() {
+                return CollectionEffectScanner.this.scan(node.getBlock(), unused);
+            }
+        });
+        Map<Element, Set<CollectionProof>> catchEntry =
+                mergeAliasStates(beforeResources, tryFlow.observed);
+        Map<Element, Set<CollectionProof>> joined = copyAliasState(tryFlow.end);
+        Map<Element, Set<CollectionProof>> finallyEntry =
+                mergeAliasStates(tryFlow.end, tryFlow.observed);
+        for (final CatchTree catchTree : node.getCatches()) {
+            FlowResult catchFlow = scanFlow(catchEntry, new ScanAction() {
+                @Override
+                public Void scan() {
+                    return CollectionEffectScanner.this.scan(catchTree, unused);
+                }
+            });
+            mergeAliasStateInto(joined, catchFlow.end);
+            mergeAliasStateInto(finallyEntry, catchFlow.observed);
+        }
+        if (node.getFinallyBlock() != null) {
+            FlowResult finallyFlow = scanFlow(finallyEntry, new ScanAction() {
+                @Override
+                public Void scan() {
+                    return CollectionEffectScanner.this.scan(node.getFinallyBlock(), unused);
+                }
+            });
+            aliases = finallyFlow.end;
+        } else {
+            aliases = joined;
+        }
+        observeAliases();
+        return null;
     }
 
     @Override
@@ -436,6 +637,9 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
     private Set<CollectionProof> referencedProofs(ExpressionTree expression) {
         LinkedHashSet<CollectionProof> result = new LinkedHashSet<CollectionProof>();
         ExpressionTree unwrapped = unwrap(expression);
+        if (unwrapped instanceof AssignmentTree) {
+            return referencedProofs(((AssignmentTree) unwrapped).getExpression());
+        }
         if (unwrapped instanceof ConditionalExpressionTree) {
             ConditionalExpressionTree conditional = (ConditionalExpressionTree) unwrapped;
             result.addAll(referencedProofs(conditional.getTrueExpression()));
@@ -463,7 +667,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
         return result;
     }
 
-    private Set<CollectionProof> collectNestedProofs(ExpressionTree expression) {
+    private Set<CollectionProof> collectNestedProofs(Tree expression) {
         final LinkedHashSet<CollectionProof> result = new LinkedHashSet<CollectionProof>();
         TreePath expressionPath = TreePath.getPath(
                 getCurrentPath().getCompilationUnit(), expression);
@@ -510,6 +714,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
         if (isLocalAliasTarget(target)) {
             recordAlias(target, initializer, referenced, diagnosticTree);
             aliases.put(target, copyProofs(referenced));
+            observeAliases();
             return;
         }
         for (CollectionProof proof : referenced) {
@@ -559,6 +764,10 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
             return hasExactCollectionContract(
                     ((TypeCastTree) unwrapped).getExpression(), proof);
         }
+        if (unwrapped instanceof AssignmentTree) {
+            return hasExactCollectionContract(
+                    ((AssignmentTree) unwrapped).getExpression(), proof);
+        }
         if (unwrapped instanceof ConditionalExpressionTree) {
             ConditionalExpressionTree conditional = (ConditionalExpressionTree) unwrapped;
             return branchContractProven(conditional.getTrueExpression(), proof)
@@ -603,6 +812,10 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
             return hasExactGenericFlow(
                     ((TypeCastTree) unwrapped).getExpression(), retainedContract);
         }
+        if (unwrapped instanceof AssignmentTree) {
+            return hasExactGenericFlow(
+                    ((AssignmentTree) unwrapped).getExpression(), retainedContract);
+        }
         if (unwrapped instanceof ConditionalExpressionTree) {
             ConditionalExpressionTree conditional = (ConditionalExpressionTree) unwrapped;
             return hasExactGenericFlow(conditional.getTrueExpression(), retainedContract)
@@ -613,6 +826,10 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
 
     private boolean referencesUncheckedCollectionAlias(ExpressionTree expression) {
         ExpressionTree unwrapped = unwrap(expression);
+        if (unwrapped instanceof AssignmentTree) {
+            return referencesUncheckedCollectionAlias(
+                    ((AssignmentTree) unwrapped).getExpression());
+        }
         if (unwrapped instanceof ConditionalExpressionTree) {
             ConditionalExpressionTree conditional = (ConditionalExpressionTree) unwrapped;
             return referencesUncheckedCollectionAlias(conditional.getTrueExpression())
@@ -740,6 +957,126 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
         return new LinkedHashSet<CollectionProof>(proofs);
     }
 
+    private Set<CollectionProof> bindingPatternProofs() {
+        TreePath parent = getCurrentPath().getParentPath();
+        if (parent == null || !"BINDING_PATTERN".equals(parent.getLeaf().getKind().name())) {
+            return new LinkedHashSet<CollectionProof>();
+        }
+        for (TreePath path = parent.getParentPath(); path != null; path = path.getParentPath()) {
+            Tree leaf = path.getLeaf();
+            String kind = leaf.getKind().name();
+            if ("INSTANCE_OF".equals(kind)) {
+                return referencedProofs(((InstanceOfTree) leaf).getExpression());
+            }
+            if ("SWITCH".equals(kind) || "SWITCH_EXPRESSION".equals(kind)) {
+                return switchSelectorProofs(path);
+            }
+        }
+        return new LinkedHashSet<CollectionProof>();
+    }
+
+    private Set<CollectionProof> switchSelectorProofs(TreePath switchPath) {
+        if (switchPath.getLeaf() instanceof SwitchTree) {
+            return referencedProofs(((SwitchTree) switchPath.getLeaf()).getExpression());
+        }
+        final LinkedHashSet<CollectionProof> result = new LinkedHashSet<CollectionProof>();
+        new TreePathScanner<Void, Void>() {
+            @Override
+            public Void scan(Tree candidate, Void unused) {
+                if (candidate != null && "CASE".equals(candidate.getKind().name())) {
+                    return null;
+                }
+                return super.scan(candidate, unused);
+            }
+
+            @Override
+            public Void visitIdentifier(IdentifierTree node, Void unused) {
+                addElementProofs(trees.getElement(getCurrentPath()), result);
+                return super.visitIdentifier(node, unused);
+            }
+
+            @Override
+            public Void visitMemberSelect(MemberSelectTree node, Void unused) {
+                addElementProofs(trees.getElement(getCurrentPath()), result);
+                return super.visitMemberSelect(node, unused);
+            }
+        }.scan(switchPath, null);
+        return result;
+    }
+
+    private Void scanLoop(ScanAction iteration) {
+        Map<Element, Set<CollectionProof>> header = copyAliasState(aliases);
+        while (true) {
+            FlowResult flow = scanFlow(header, iteration);
+            Map<Element, Set<CollectionProof>> widened =
+                    mergeAliasStates(header, flow.observed);
+            if (header.equals(widened)) {
+                aliases = widened;
+                observeAliases();
+                return null;
+            }
+            header = widened;
+        }
+    }
+
+    private FlowResult scanFlow(
+            Map<Element, Set<CollectionProof>> incoming,
+            ScanAction action) {
+        Map<Element, Set<CollectionProof>> previousAliases = aliases;
+        Map<Element, Set<CollectionProof>> previousObserved = observedAliases;
+        aliases = copyAliasState(incoming);
+        observedAliases = copyAliasState(incoming);
+        try {
+            action.scan();
+            FlowResult result = new FlowResult(
+                    copyAliasState(aliases), copyAliasState(observedAliases));
+            if (previousObserved != null) {
+                mergeAliasStateInto(previousObserved, result.observed);
+            }
+            return result;
+        } finally {
+            aliases = previousAliases;
+            observedAliases = previousObserved;
+        }
+    }
+
+    private void observeAliases() {
+        if (observedAliases != null) {
+            mergeAliasStateInto(observedAliases, aliases);
+        }
+    }
+
+    private static Map<Element, Set<CollectionProof>> copyAliasState(
+            Map<Element, Set<CollectionProof>> source) {
+        Map<Element, Set<CollectionProof>> copy =
+                new LinkedHashMap<Element, Set<CollectionProof>>();
+        for (Map.Entry<Element, Set<CollectionProof>> entry : source.entrySet()) {
+            copy.put(entry.getKey(), copyProofs(entry.getValue()));
+        }
+        return copy;
+    }
+
+    private static Map<Element, Set<CollectionProof>> mergeAliasStates(
+            Map<Element, Set<CollectionProof>> first,
+            Map<Element, Set<CollectionProof>> second) {
+        Map<Element, Set<CollectionProof>> merged = copyAliasState(first);
+        mergeAliasStateInto(merged, second);
+        return merged;
+    }
+
+    private static void mergeAliasStateInto(
+            Map<Element, Set<CollectionProof>> target,
+            Map<Element, Set<CollectionProof>> addition) {
+        for (Map.Entry<Element, Set<CollectionProof>> entry : addition.entrySet()) {
+            Set<CollectionProof> existing = target.get(entry.getKey());
+            if (existing == null) {
+                target.put(entry.getKey(), copyProofs(entry.getValue()));
+            } else {
+                existing.addAll(entry.getValue());
+            }
+        }
+    }
+
     private ExecutableElement executableElement() {
         Element element = trees.getElement(getCurrentPath());
         return element instanceof ExecutableElement ? (ExecutableElement) element : null;
@@ -759,7 +1096,8 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
         return kind == ElementKind.LOCAL_VARIABLE
                 || kind == ElementKind.PARAMETER
                 || kind == ElementKind.EXCEPTION_PARAMETER
-                || kind == ElementKind.RESOURCE_VARIABLE;
+                || kind == ElementKind.RESOURCE_VARIABLE
+                || "BINDING_VARIABLE".equals(kind.name());
     }
 
     private long sourcePosition(Tree tree) {
@@ -769,6 +1107,11 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
     }
 
     private void addFailure(DiagnosticId id, CollectionProof proof, Tree tree, String reason) {
+        String failureKey = id.name() + '\u0000' + proof.getPath() + '\u0000'
+                + sourcePosition(tree) + '\u0000' + reason;
+        if (!reportedFailures.add(failureKey)) {
+            return;
+        }
         failures.add(ProofFailure.create(
                 id,
                 rootName,
@@ -808,10 +1151,12 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
         ExecutableElement previousExecutable = executable;
         String previousDescription = executableContext;
         Map<Element, Set<CollectionProof>> previousAliases = aliases;
+        Map<Element, Set<CollectionProof>> previousObserved = observedAliases;
         phase = nextPhase;
         executable = nextExecutable;
         executableContext = nextDescription;
-        aliases = new LinkedHashMap<Element, Set<CollectionProof>>(previousAliases);
+        aliases = copyAliasState(previousAliases);
+        observedAliases = null;
         try {
             return action.scan();
         } finally {
@@ -819,6 +1164,7 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
             executable = previousExecutable;
             executableContext = previousDescription;
             aliases = previousAliases;
+            observedAliases = previousObserved;
         }
     }
 
@@ -840,5 +1186,22 @@ final class CollectionEffectScanner extends TreePathScanner<Void, Void> {
 
     private interface ScanAction {
         Void scan();
+    }
+
+    private static final class FlowResult {
+        private final Map<Element, Set<CollectionProof>> end;
+        private final Map<Element, Set<CollectionProof>> observed;
+
+        private FlowResult(
+                Map<Element, Set<CollectionProof>> end,
+                Map<Element, Set<CollectionProof>> observed) {
+            this.end = end;
+            this.observed = observed;
+        }
+
+        private static FlowResult unchanged(Map<Element, Set<CollectionProof>> state) {
+            Map<Element, Set<CollectionProof>> copy = copyAliasState(state);
+            return new FlowResult(copy, copyAliasState(copy));
+        }
     }
 }

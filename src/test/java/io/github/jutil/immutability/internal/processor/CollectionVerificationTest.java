@@ -383,6 +383,222 @@ class CollectionVerificationTest {
     }
 
     @Test
+    void ifElseJoinsRetainStaticAndInstanceTargetsInEitherBranchOrder() {
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> instanceValues = new ArrayList<>();\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values(boolean flag) {\n"
+                + "    List<String> target;\n"
+                + "    if (flag) target = staticValues; else target = instanceValues;\n"
+                + "    target.add(\"x\");\n"
+                + "  }\n"
+                + "}\n",
+                "[IC006]", "Values.<static>.staticValues", "after class initialization");
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> instanceValues = new ArrayList<>();\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values(boolean flag) {\n"
+                + "    List<String> target;\n"
+                + "    if (flag) target = instanceValues; else target = staticValues;\n"
+                + "    target.add(\"x\");\n"
+                + "  }\n"
+                + "}\n",
+                "[IC006]", "Values.<static>.staticValues", "after class initialization");
+    }
+
+    @Test
+    void ifWithoutElsePreservesIncomingAliasAndFreshBranchDoesNotEraseIt() {
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> instanceValues = new ArrayList<>();\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values(boolean flag) {\n"
+                + "    List<String> target = staticValues;\n"
+                + "    if (flag) target = instanceValues;\n"
+                + "    target.add(\"x\");\n"
+                + "  }\n"
+                + "}\n",
+                "[IC006]", "Values.<static>.staticValues");
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values(boolean flag) {\n"
+                + "    List<String> target = staticValues;\n"
+                + "    if (flag) target = new ArrayList<>();\n"
+                + "    target.add(\"x\");\n"
+                + "  }\n"
+                + "}\n",
+                "[IC006]", "Values.<static>.staticValues");
+    }
+
+    @Test
+    void zeroIterationLoopPreservesIncomingAlias() {
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> instanceValues = new ArrayList<>();\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values(boolean repeat) {\n"
+                + "    List<String> target = staticValues;\n"
+                + "    while (repeat) { target = instanceValues; repeat = false; }\n"
+                + "    target.add(\"x\");\n"
+                + "  }\n"
+                + "}\n",
+                "[IC006]", "Values.<static>.staticValues");
+    }
+
+    @Test
+    void switchStatementJoinsDifferentRetainedTargets() {
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> instanceValues = new ArrayList<>();\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values(int selector) {\n"
+                + "    List<String> target;\n"
+                + "    switch (selector) {\n"
+                + "      case 0: target = staticValues; break;\n"
+                + "      default: target = instanceValues;\n"
+                + "    }\n"
+                + "    target.add(\"x\");\n"
+                + "  }\n"
+                + "}\n",
+                "[IC006]", "Values.<static>.staticValues");
+    }
+
+    @Test
+    void tryAndCatchJoinDifferentRetainedTargets() {
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> instanceValues = new ArrayList<>();\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values() {\n"
+                + "    List<String> target;\n"
+                + "    try { target = staticValues; }\n"
+                + "    catch (RuntimeException failure) { target = instanceValues; }\n"
+                + "    target.add(\"x\");\n"
+                + "  }\n"
+                + "}\n",
+                "[IC006]", "Values.<static>.staticValues");
+    }
+
+    @Test
+    void finallyAppliesToEveryJoinedTryAndCatchTarget() {
+        assertFails("example.Values", HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> instanceValues = new ArrayList<>();\n"
+                + "  private static final List<String> staticValues = new ArrayList<>();\n"
+                + "  Values(boolean flag) {\n"
+                + "    List<String> target;\n"
+                + "    try { target = instanceValues; }\n"
+                + "    catch (RuntimeException failure) { target = instanceValues; }\n"
+                + "    finally { if (flag) target = staticValues; }\n"
+                + "    target.add(\"x\");\n"
+                + "  }\n"
+                + "}\n",
+                "[IC006]", "Values.<static>.staticValues");
+    }
+
+    @Test
+    void joinedProofOrderingIsDeterministicAndFollowsBranchOrder() {
+        String source = HEADER
+                + "@Immutable final class Values {\n"
+                + "  private final List<String> first = new ArrayList<>();\n"
+                + "  private final List<String> second = new ArrayList<>();\n"
+                + "  Object expose(boolean flag) {\n"
+                + "    List<String> target;\n"
+                + "    if (flag) target = first; else target = second;\n"
+                + "    return target;\n"
+                + "  }\n"
+                + "}\n";
+        CompilerTestHarness.CompilationResult first = compiler.compile("example.Values", source);
+        CompilerTestHarness.CompilationResult second = compiler.compile("example.Values", source);
+        assertFalse(first.isSuccessful());
+        assertEquals(first.joinedErrors(), second.joinedErrors());
+        assertTrue(first.joinedErrors().indexOf("Values.first")
+                < first.joinedErrors().indexOf("Values.second"), first.joinedErrors());
+    }
+
+    @Test
+    void assignmentExpressionReturnArgumentAndArrayFlowsFailClosed() {
+        assertFails("example.Names", HEADER
+                + "@Immutable final class Names {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  List<String> expose() { List<String> alias; return alias = values; }\n"
+                + "}\n",
+                "[IC005]", "Names.values", "escapes through return");
+        assertFails("example.Names", HEADER
+                + "final class External { static void accept(Object value) {} }\n"
+                + "@Immutable final class Names {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  void expose() { List<String> alias; External.accept(alias = values); }\n"
+                + "}\n",
+                "[IC005]", "Names.values", "passed to", "effects are unproven");
+        assertFails("example.Names", HEADER
+                + "final class External { External(Object value) {} }\n"
+                + "@Immutable final class Names {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  Object expose() { List<String> alias; return new External(alias = values); }\n"
+                + "}\n",
+                "[IC005]", "Names.values", "unmodeled constructor", "may escape");
+        assertFails("example.Names", HEADER
+                + "@Immutable final class Names {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  Object[] expose() { List<String> alias; return new Object[] { alias = values }; }\n"
+                + "}\n",
+                "[IC005]", "Names.values", "stored into an array");
+    }
+
+    @Test
+    void nestedConditionalAndLambdaAssignmentExpressionFlowsFailClosed() {
+        assertFails("example.Names", HEADER
+                + "import java.util.function.Supplier;\n"
+                + "final class External { static List<String> alias; }\n"
+                + "@Immutable final class Names {\n"
+                + "  private final List<String> values = new ArrayList<>();\n"
+                + "  Object conditional(boolean flag) {\n"
+                + "    List<String> alias; return flag ? (alias = values) : null;\n"
+                + "  }\n"
+                + "  Object nested() {\n"
+                + "    List<String> first; List<String> second; return first = second = values;\n"
+                + "  }\n"
+                + "  Supplier<List<String>> callback() { return () -> External.alias = values; }\n"
+                + "}\n",
+                "[IC005]", "Names.values", "escapes through return", "callback result");
+    }
+
+    @Test
+    void instanceofBindingPatternAliasFailsClosedOnCapableJdk() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(supportsSourceVersion(16));
+        assertFails("example.Names", HEADER
+                + "@Immutable final class Names {\n"
+                + "  private final Collection<String> values = new ArrayList<>();\n"
+                + "  @SuppressWarnings({\"rawtypes\", \"unchecked\"})\n"
+                + "  void mutate() {\n"
+                + "    if (values instanceof List<?> alias) { ((List) alias).add(\"x\"); }\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "Names.values", "binding pattern may alias");
+    }
+
+    @Test
+    void switchBindingPatternAliasFailsClosedOnCapableJdk() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(supportsSourceVersion(21));
+        assertFails("example.Names", HEADER
+                + "@Immutable final class Names {\n"
+                + "  private final Collection<String> values = new ArrayList<>();\n"
+                + "  @SuppressWarnings({\"rawtypes\", \"unchecked\"})\n"
+                + "  void mutate() {\n"
+                + "    switch (values) {\n"
+                + "      case List<?> alias -> ((List) alias).add(\"x\");\n"
+                + "      default -> { }\n"
+                + "    }\n"
+                + "  }\n"
+                + "}\n",
+                "[IC005]", "Names.values", "binding pattern may alias");
+    }
+
+    @Test
     void switchExpressionAndYieldCollectionFlowsFailClosedOnCapableJdk() {
         org.junit.jupiter.api.Assumptions.assumeTrue(supportsSwitchExpressions());
         assertFails("example.Values", HEADER
@@ -830,8 +1046,12 @@ class CollectionVerificationTest {
     }
 
     private static boolean supportsSwitchExpressions() {
+        return supportsSourceVersion(14);
+    }
+
+    private static boolean supportsSourceVersion(int minimum) {
         String release = SourceVersion.latestSupported().name();
         int separator = release.lastIndexOf('_');
-        return separator >= 0 && Integer.parseInt(release.substring(separator + 1)) >= 14;
+        return separator >= 0 && Integer.parseInt(release.substring(separator + 1)) >= minimum;
     }
 }

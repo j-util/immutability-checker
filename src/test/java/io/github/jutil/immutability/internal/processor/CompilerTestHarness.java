@@ -1,5 +1,6 @@
 package io.github.jutil.immutability.internal.processor;
 
+import javax.lang.model.SourceVersion;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -9,6 +10,8 @@ import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -26,12 +29,21 @@ final class CompilerTestHarness {
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<JavaFileObject>();
         StandardJavaFileManager fileManager = compiler.getStandardFileManager(
                 diagnostics, Locale.ROOT, null);
+        Path output = null;
         try {
             JavaFileObject sourceFile = new SourceFile(className, source);
-            List<String> options = Arrays.asList(
-                    "-proc:only",
-                    "-classpath",
-                    System.getProperty("java.class.path"));
+            List<String> options = new ArrayList<String>();
+            if (SourceVersion.latestSupported() == SourceVersion.RELEASE_8) {
+                output = Files.createTempDirectory("immutability-checker-unit-");
+                // javac 8 otherwise generates and clears one top-level tree before
+                // ANALYZE completes for later declarations in the same source.
+                options.addAll(Arrays.asList(
+                        "-XDcompilePolicy=simple", "-d", output.toString()));
+            } else {
+                options.add("-proc:only");
+            }
+            options.addAll(Arrays.asList(
+                    "-classpath", System.getProperty("java.class.path")));
             JavaCompiler.CompilationTask task = compiler.getTask(
                     null,
                     fileManager,
@@ -42,12 +54,34 @@ final class CompilerTestHarness {
             task.setProcessors(Collections.singletonList(new ImmutableProcessor()));
             boolean successful = Boolean.TRUE.equals(task.call());
             return new CompilationResult(successful, normalizeErrors(diagnostics));
+        } catch (IOException failure) {
+            throw new IllegalStateException("Could not create compiler test output", failure);
         } finally {
             try {
                 fileManager.close();
             } catch (IOException closeFailure) {
                 throw new IllegalStateException("Could not close compiler file manager", closeFailure);
             }
+            if (output != null) {
+                deleteRecursively(output);
+            }
+        }
+    }
+
+    private static void deleteRecursively(Path directory) {
+        try (java.util.stream.Stream<Path> paths = Files.walk(directory)) {
+            paths.sorted(Collections.reverseOrder()).forEach(path -> {
+                try {
+                    Files.delete(path);
+                } catch (IOException failure) {
+                    throw new DeleteFailure(failure);
+                }
+            });
+        } catch (IOException failure) {
+            throw new IllegalStateException("Could not delete compiler test output", failure);
+        } catch (DeleteFailure failure) {
+            throw new IllegalStateException(
+                    "Could not delete compiler test output", failure.getCause());
         }
     }
 
@@ -100,6 +134,14 @@ final class CompilerTestHarness {
         @Override
         public CharSequence getCharContent(boolean ignoreEncodingErrors) {
             return source;
+        }
+    }
+
+    private static final class DeleteFailure extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        private DeleteFailure(IOException cause) {
+            super(cause);
         }
     }
 }

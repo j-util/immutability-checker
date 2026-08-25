@@ -1,6 +1,10 @@
 package io.github.jutil.immutability.internal.processor;
 
 import com.sun.source.tree.ClassTree;
+import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.util.JavacTask;
+import com.sun.source.util.TaskEvent;
+import com.sun.source.util.TaskListener;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
@@ -19,8 +23,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -42,8 +48,13 @@ public final class ImmutableProcessor extends AbstractProcessor {
     static final String IMMUTABLE_ANNOTATION = "io.github.jutil.immutability.Immutable";
 
     private final Set<String> processedTypes = new HashSet<String>();
+    private final Map<String, TypeElement> pendingTypes =
+            new LinkedHashMap<String, TypeElement>();
+    private final Map<String, String> pendingSources =
+            new LinkedHashMap<String, String>();
     private Trees trees;
     private DirectStateVerifier verifier;
+    private boolean deferUntilAnalyze;
 
     @Override
     public synchronized void init(ProcessingEnvironment processingEnvironment) {
@@ -55,6 +66,20 @@ public final class ImmutableProcessor extends AbstractProcessor {
                     processingEnvironment.getElementUtils(),
                     processingEnvironment.getTypeUtils(),
                     processingEnvironment.getMessager());
+            deferUntilAnalyze = SourceVersion.latestSupported() == SourceVersion.RELEASE_8;
+            if (deferUntilAnalyze) {
+                JavacTask.instance(processingEnvironment).addTaskListener(new TaskListener() {
+                    @Override
+                    public void started(TaskEvent event) {
+                        // Verification needs the completed ANALYZE event on javac 8.
+                    }
+
+                    @Override
+                    public void finished(TaskEvent event) {
+                        handleTaskFinished(event);
+                    }
+                });
+            }
         } catch (IllegalArgumentException unavailable) {
             trees = null;
             verifier = null;
@@ -76,7 +101,7 @@ public final class ImmutableProcessor extends AbstractProcessor {
         Collections.sort(annotatedTypes, new Comparator<TypeElement>() {
             @Override
             public int compare(TypeElement left, TypeElement right) {
-                return processingKey(left).compareTo(processingKey(right));
+                return compareProcessingOrder(left, right);
             }
         });
 
@@ -93,18 +118,91 @@ public final class ImmutableProcessor extends AbstractProcessor {
                         type);
                 continue;
             }
-            try {
-                verifier.verify(type);
-            } catch (RuntimeException unsupportedConstruct) {
-                processingEnv.getMessager().printMessage(
-                        Diagnostic.Kind.ERROR,
-                        "[IC000] Immutability verification failed for " + displayName(type)
-                                + ": source construct could not be analyzed; immutability cannot be established ("
-                                + unsupportedConstruct.getClass().getSimpleName() + ")",
-                        type);
+            if (deferUntilAnalyze) {
+                pendingTypes.put(key, type);
+                pendingSources.put(key, sourceName(type));
+            } else {
+                verify(type);
             }
         }
         return claimsOnlyImmutable(annotations);
+    }
+
+    private void handleTaskFinished(TaskEvent event) {
+        if (!deferUntilAnalyze) {
+            return;
+        }
+        if (event.getKind() == TaskEvent.Kind.ANALYZE) {
+            refreshPendingTypes(event.getCompilationUnit());
+            String source = sourceName(event.getCompilationUnit());
+            if (event.getTypeElement() != null) {
+                verifyPendingTypes(source, event.getTypeElement());
+            }
+        }
+    }
+
+    private void refreshPendingTypes(CompilationUnitTree compilationUnit) {
+        Set<TypeElement> annotated = new LinkedHashSet<TypeElement>();
+        new AnnotatedTypeCollector(trees, annotated).scan(
+                new TreePath(compilationUnit), null);
+        String source = sourceName(compilationUnit);
+        for (TypeElement refreshed : annotated) {
+            for (Map.Entry<String, TypeElement> pending : pendingTypes.entrySet()) {
+                if (source.equals(pendingSources.get(pending.getKey()))
+                        && displayName(refreshed).equals(displayName(pending.getValue()))) {
+                    pending.setValue(refreshed);
+                }
+            }
+        }
+    }
+
+    private void verifyPendingTypes(String source, TypeElement analyzedRoot) {
+        List<Map.Entry<String, TypeElement>> candidates =
+                new ArrayList<Map.Entry<String, TypeElement>>();
+        for (Map.Entry<String, TypeElement> entry : pendingTypes.entrySet()) {
+            if (source.equals(pendingSources.get(entry.getKey()))
+                    && displayName(analyzedRoot).equals(
+                    displayName(topLevelType(entry.getValue())))) {
+                candidates.add(entry);
+            }
+        }
+        Collections.sort(candidates, new Comparator<Map.Entry<String, TypeElement>>() {
+            @Override
+            public int compare(
+                    Map.Entry<String, TypeElement> left,
+                    Map.Entry<String, TypeElement> right) {
+                return compareProcessingOrder(left.getValue(), right.getValue());
+            }
+        });
+        for (Map.Entry<String, TypeElement> candidate : candidates) {
+            verify(candidate.getValue());
+            pendingTypes.remove(candidate.getKey());
+            pendingSources.remove(candidate.getKey());
+        }
+    }
+
+    private static TypeElement topLevelType(TypeElement type) {
+        TypeElement topLevel = type;
+        for (Element enclosing = type.getEnclosingElement(); enclosing != null;
+                enclosing = enclosing.getEnclosingElement()) {
+            if (enclosing instanceof TypeElement) {
+                topLevel = (TypeElement) enclosing;
+            }
+        }
+        return topLevel;
+    }
+
+    private void verify(TypeElement type) {
+        try {
+            verifier.verify(type);
+        } catch (RuntimeException unsupportedConstruct) {
+            processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.ERROR,
+                    "[IC000] Immutability verification failed for " + displayName(type)
+                            + ": source construct could not be analyzed; immutability cannot be established ("
+                            + unsupportedConstruct.getClass().getSimpleName() + ")",
+                    type);
+        }
     }
 
     private List<TypeElement> collectAnnotatedTypes(RoundEnvironment roundEnvironment) {
@@ -138,12 +236,43 @@ public final class ImmutableProcessor extends AbstractProcessor {
         if (path == null) {
             return displayName(type);
         }
-        String sourceName = path.getCompilationUnit().getSourceFile() == null
-                ? ""
-                : path.getCompilationUnit().getSourceFile().toUri().toString();
+        String sourceName = sourceName(path.getCompilationUnit());
         long position = trees.getSourcePositions().getStartPosition(
                 path.getCompilationUnit(), path.getLeaf());
         return sourceName + ":" + position + ":" + displayName(type);
+    }
+
+    private int compareProcessingOrder(TypeElement left, TypeElement right) {
+        TreePath leftPath = trees.getPath(left);
+        TreePath rightPath = trees.getPath(right);
+        if (leftPath == null || rightPath == null) {
+            return processingKey(left).compareTo(processingKey(right));
+        }
+        String leftSource = sourceName(leftPath.getCompilationUnit());
+        String rightSource = sourceName(rightPath.getCompilationUnit());
+        int sourceComparison = leftSource.compareTo(rightSource);
+        if (sourceComparison != 0) {
+            return sourceComparison;
+        }
+        long leftPosition = trees.getSourcePositions().getStartPosition(
+                leftPath.getCompilationUnit(), leftPath.getLeaf());
+        long rightPosition = trees.getSourcePositions().getStartPosition(
+                rightPath.getCompilationUnit(), rightPath.getLeaf());
+        int positionComparison = Long.compare(leftPosition, rightPosition);
+        return positionComparison != 0
+                ? positionComparison
+                : displayName(left).compareTo(displayName(right));
+    }
+
+    private static String sourceName(CompilationUnitTree compilationUnit) {
+        return compilationUnit == null || compilationUnit.getSourceFile() == null
+                ? ""
+                : compilationUnit.getSourceFile().toUri().toString();
+    }
+
+    private String sourceName(TypeElement type) {
+        TreePath path = trees.getPath(type);
+        return path == null ? "" : sourceName(path.getCompilationUnit());
     }
 
     private static String displayName(TypeElement type) {

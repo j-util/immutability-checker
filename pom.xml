@@ -174,6 +174,46 @@
 
     <profiles>
         <profile>
+            <id>jdk8-tools-from-jre-home</id>
+            <activation>
+                <jdk>[1.8,1.9)</jdk>
+                <file>
+                    <exists>${java.home}/../lib/tools.jar</exists>
+                </file>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>jdk</groupId>
+                    <artifactId>tools</artifactId>
+                    <version>1.8</version>
+                    <scope>system</scope>
+                    <systemPath>${java.home}/../lib/tools.jar</systemPath>
+                    <optional>true</optional>
+                </dependency>
+            </dependencies>
+        </profile>
+
+        <profile>
+            <id>jdk8-tools-from-jdk-home</id>
+            <activation>
+                <jdk>[1.8,1.9)</jdk>
+                <file>
+                    <exists>${java.home}/lib/tools.jar</exists>
+                </file>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>jdk</groupId>
+                    <artifactId>tools</artifactId>
+                    <version>1.8</version>
+                    <scope>system</scope>
+                    <systemPath>${java.home}/lib/tools.jar</systemPath>
+                    <optional>true</optional>
+                </dependency>
+            </dependencies>
+        </profile>
+
+        <profile>
             <id>release</id>
             <build>
                 <plugins>
