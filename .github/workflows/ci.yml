@@ -17,6 +17,7 @@ jobs:
       matrix:
         java:
           - '8'
+          - '17'
           - '26'
 
     steps:

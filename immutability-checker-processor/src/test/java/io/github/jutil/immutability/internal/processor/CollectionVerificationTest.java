@@ -528,7 +528,7 @@ class CollectionVerificationTest {
                 + "}\n",
                 "[IC005]", "Names.values", "escapes through return");
         assertFails("example.Names", HEADER
-                + "final class External { static void accept(Object value) {} }\n"
+                + "final class External { static native void accept(Object value); }\n"
                 + "@Immutable final class Names {\n"
                 + "  private final List<String> values = new ArrayList<>();\n"
                 + "  void expose() { List<String> alias; External.accept(alias = values); }\n"
@@ -617,7 +617,7 @@ class CollectionVerificationTest {
                 + "    };\n"
                 + "  }\n"
                 + "}\n",
-                "[IC005]", "Values.values", "escapes through return");
+                "[IC005]", "Values.values", "switch-expression collection flow");
     }
 
     @Test
@@ -719,7 +719,7 @@ class CollectionVerificationTest {
     @Test
     void rejectsPassingCollectionToUnknownMethod() {
         assertFails("example.Names", HEADER
-                + "final class External { static void accept(Object value) {} }\n"
+                + "final class External { static native void accept(Object value); }\n"
                 + "@Immutable final class Names {\n"
                 + "  private List<String> values = new ArrayList<>();\n"
                 + "  void register() { External.accept(values); }\n"
@@ -956,17 +956,16 @@ class CollectionVerificationTest {
     }
 
     @Test
-    void rejectsMultipleCompetingFreshOrigins() {
-        assertFails("example.Names", HEADER
+    void acceptsSequentialFreshReplacementDuringConstruction() {
+        assertPasses("example.Names", HEADER
                 + "@Immutable final class Names {\n"
                 + "  private List<String> values = new ArrayList<>();\n"
                 + "  Names() { values = new ArrayList<>(); }\n"
-                + "}\n",
-                "[IC005]", "Names.values", "multiple competing collection ownership origins");
+                + "}\n");
     }
 
     @Test
-    void rejectsConditionalAndHelperOwnershipOrigins() {
+    void rejectsIncompleteConditionalInitializationEvenWithSupportedHelper() {
         assertFails("example.Names", HEADER
                 + "@Immutable final class Names {\n"
                 + "  private List<String> conditional;\n"
@@ -974,8 +973,7 @@ class CollectionVerificationTest {
                 + "  Names(boolean flag) { if (flag) conditional = new ArrayList<>(); }\n"
                 + "  private static List<String> create() { return new ArrayList<>(); }\n"
                 + "}\n",
-                "[IC005]", "Names.conditional", "allocation is conditional",
-                "Names.helper", "helper and factory method return values");
+                "[IC005]", "Names.conditional", "allocation is conditional");
     }
 
     @Test

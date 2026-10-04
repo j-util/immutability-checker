@@ -1,18 +1,18 @@
-# Releasing 0.1.0
+# Releasing 0.2.0
 
-Immutability Checker 0.1.0 is a technical-preview release. One exact commit and
-one annotated `v0.1.0` tag cover both published modules:
+Immutability Checker 0.2.0 is an unreleased technical preview under preparation. One exact commit and
+one annotated `v0.2.0` tag cover both published modules:
 
-- `io.github.j-util:immutability-checker:0.1.0`
-- `io.github.j-util:immutability-checker-processor:0.1.0`
+- `io.github.j-util:immutability-checker:0.2.0`
+- `io.github.j-util:immutability-checker-processor:0.2.0`
 
-`io.github.j-util:immutability-checker-build:0.1.0` is the unpublished reactor
+`io.github.j-util:immutability-checker-build:0.2.0` is the unpublished reactor
 aggregator and must never be uploaded.
 
 ## Preflight
 
 Start only from a clean `main` branch whose exact commit has green Temurin Java
-8 and Java 26 CI:
+8, Java 17 and Java 26 CI:
 
 ```shell
 git status --short
@@ -68,13 +68,23 @@ Select Temurin JDK 8, confirm it with `./mvnw --version`, and run:
 ./mvnw --batch-mode --no-transfer-progress dependency:tree
 ```
 
-Repeat the same two commands under Temurin JDK 26. Then run the unsigned
+Repeat the same two commands under Temurin JDK 17 and JDK 26.
+`List.copyOf` fixtures are skipped on Java 8 because that API was added in
+Java 10; ordinary-class/helper and packaged discovery tests must actually run
+on Java 8. Modern compiler checks also exercise `--release 8`. Then run the unsigned
 signing-profile dry run:
 
 ```shell
 ./mvnw --batch-mode --no-transfer-progress \
   -Prelease -Dgpg.skip=true clean verify
 ```
+
+The compiler suite includes both required helper examples and their unsafe
+variants. The packaged runtime test checks input and returned-copy isolation,
+snapshot order/duplicates, empty lists, null rejection and repeated snapshots.
+Also compile passing/failing Java 8 helper consumers and Java 17/26 snapshot
+consumers from a temporary external Maven project with an isolated repository,
+`provided` annotation API and explicit processor path. Inspect its runtime tree.
 
 ## Local Central bundle
 
@@ -137,10 +147,10 @@ Only after the release commit is final and its exact CI is green, create the
 annotated tag and push `main` and that exact tag:
 
 ```shell
-git tag -a v0.1.0 \
-  -m "Immutability Checker 0.1.0 — Technical Preview"
+git tag -a v0.2.0 \
+  -m "Immutability Checker 0.2.0 — Technical Preview"
 git push origin main
-git push origin v0.1.0
+git push origin v0.2.0
 ```
 
 Create the GitHub prerelease only after the tag exists remotely, Central
@@ -148,9 +158,9 @@ validation succeeds, and the deployment is confirmed to contain both expected
 coordinates:
 
 ```shell
-gh release create v0.1.0 \
+gh release create v0.2.0 \
   --repo j-util/immutability-checker \
-  --title "Immutability Checker 0.1.0 — Technical Preview" \
+  --title "Immutability Checker 0.2.0 — Technical Preview" \
   --prerelease \
   --generate-notes
 ```

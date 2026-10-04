@@ -50,11 +50,11 @@ public final class ImmutableProcessor extends AbstractProcessor {
     private final Set<String> processedTypes = new HashSet<String>();
     private final Map<String, TypeElement> pendingTypes =
             new LinkedHashMap<String, TypeElement>();
-    private final Map<String, String> pendingSources =
-            new LinkedHashMap<String, String>();
     private Trees trees;
     private DirectStateVerifier verifier;
     private boolean deferUntilAnalyze;
+    private SourceSnapshots snapshots;
+    private final Set<String> awaitingAnalysis = new LinkedHashSet<String>();
 
     /**
      * Creates the service provider used by JSR 269 processor discovery.
@@ -67,12 +67,15 @@ public final class ImmutableProcessor extends AbstractProcessor {
         super.init(processingEnvironment);
         try {
             trees = Trees.instance(processingEnvironment);
+            deferUntilAnalyze = SourceVersion.latestSupported() == SourceVersion.RELEASE_8;
+            if (deferUntilAnalyze) {
+                snapshots = new SourceSnapshots(trees);
+            }
             verifier = new DirectStateVerifier(
-                    trees,
+                    snapshots == null ? trees : snapshots,
                     processingEnvironment.getElementUtils(),
                     processingEnvironment.getTypeUtils(),
                     processingEnvironment.getMessager());
-            deferUntilAnalyze = SourceVersion.latestSupported() == SourceVersion.RELEASE_8;
             if (deferUntilAnalyze) {
                 JavacTask.instance(processingEnvironment).addTaskListener(new TaskListener() {
                     @Override
@@ -103,6 +106,13 @@ public final class ImmutableProcessor extends AbstractProcessor {
             return claimsOnlyImmutable(annotations);
         }
 
+        if (deferUntilAnalyze) {
+            for (Element element : roundEnvironment.getRootElements()) {
+                if (element instanceof TypeElement) {
+                    awaitingAnalysis.add(displayName(topLevelType((TypeElement) element)));
+                }
+            }
+        }
         List<TypeElement> annotatedTypes = collectAnnotatedTypes(roundEnvironment);
         Collections.sort(annotatedTypes, new Comparator<TypeElement>() {
             @Override
@@ -126,7 +136,6 @@ public final class ImmutableProcessor extends AbstractProcessor {
             }
             if (deferUntilAnalyze) {
                 pendingTypes.put(key, type);
-                pendingSources.put(key, sourceName(type));
             } else {
                 verify(type);
             }
@@ -135,55 +144,28 @@ public final class ImmutableProcessor extends AbstractProcessor {
     }
 
     private void handleTaskFinished(TaskEvent event) {
-        if (!deferUntilAnalyze) {
+        if (!deferUntilAnalyze || pendingTypes.isEmpty()) {
             return;
         }
-        if (event.getKind() == TaskEvent.Kind.ANALYZE) {
-            refreshPendingTypes(event.getCompilationUnit());
-            String source = sourceName(event.getCompilationUnit());
-            if (event.getTypeElement() != null) {
-                verifyPendingTypes(source, event.getTypeElement());
-            }
-        }
-    }
-
-    private void refreshPendingTypes(CompilationUnitTree compilationUnit) {
-        Set<TypeElement> annotated = new LinkedHashSet<TypeElement>();
-        new AnnotatedTypeCollector(trees, annotated).scan(
-                new TreePath(compilationUnit), null);
-        String source = sourceName(compilationUnit);
-        for (TypeElement refreshed : annotated) {
-            for (Map.Entry<String, TypeElement> pending : pendingTypes.entrySet()) {
-                if (source.equals(pendingSources.get(pending.getKey()))
-                        && displayName(refreshed).equals(displayName(pending.getValue()))) {
-                    pending.setValue(refreshed);
+        if (event.getKind() == TaskEvent.Kind.ANALYZE && event.getTypeElement() != null) {
+            TypeElement top = topLevelType(event.getTypeElement());
+            snapshots.capture(top);
+            Set<TypeElement> refreshed = new LinkedHashSet<TypeElement>();
+            new AnnotatedTypeCollector(trees, refreshed).scan(new TreePath(event.getCompilationUnit()), null);
+            for (TypeElement current : refreshed) {
+                for (Map.Entry<String, TypeElement> pending : pendingTypes.entrySet()) {
+                    if (processingKey(current).equals(pending.getKey())) {
+                        pending.setValue(current);
+                    }
                 }
             }
-        }
-    }
-
-    private void verifyPendingTypes(String source, TypeElement analyzedRoot) {
-        List<Map.Entry<String, TypeElement>> candidates =
-                new ArrayList<Map.Entry<String, TypeElement>>();
-        for (Map.Entry<String, TypeElement> entry : pendingTypes.entrySet()) {
-            if (source.equals(pendingSources.get(entry.getKey()))
-                    && displayName(analyzedRoot).equals(
-                    displayName(topLevelType(entry.getValue())))) {
-                candidates.add(entry);
+            awaitingAnalysis.remove(displayName(top));
+            if (awaitingAnalysis.isEmpty()) {
+                for (TypeElement pending : pendingTypes.values()) {
+                    verify(pending);
+                }
+                pendingTypes.clear();
             }
-        }
-        Collections.sort(candidates, new Comparator<Map.Entry<String, TypeElement>>() {
-            @Override
-            public int compare(
-                    Map.Entry<String, TypeElement> left,
-                    Map.Entry<String, TypeElement> right) {
-                return compareProcessingOrder(left.getValue(), right.getValue());
-            }
-        });
-        for (Map.Entry<String, TypeElement> candidate : candidates) {
-            verify(candidate.getValue());
-            pendingTypes.remove(candidate.getKey());
-            pendingSources.remove(candidate.getKey());
         }
     }
 
@@ -274,11 +256,6 @@ public final class ImmutableProcessor extends AbstractProcessor {
         return compilationUnit == null || compilationUnit.getSourceFile() == null
                 ? ""
                 : compilationUnit.getSourceFile().toUri().toString();
-    }
-
-    private String sourceName(TypeElement type) {
-        TreePath path = trees.getPath(type);
-        return path == null ? "" : sourceName(path.getCompilationUnit());
     }
 
     private static String displayName(TypeElement type) {

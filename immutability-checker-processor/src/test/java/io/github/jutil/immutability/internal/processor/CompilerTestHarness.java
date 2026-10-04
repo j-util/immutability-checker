@@ -1,6 +1,5 @@
 package io.github.jutil.immutability.internal.processor;
 
-import javax.lang.model.SourceVersion;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -21,6 +20,10 @@ import java.util.Locale;
 final class CompilerTestHarness {
 
     CompilationResult compile(String className, String source) {
+        return compile(Collections.singletonMap(className, source));
+    }
+
+    CompilationResult compile(java.util.Map<String, String> sources) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
             throw new IllegalStateException("Tests require a JDK, not a JRE");
@@ -31,17 +34,13 @@ final class CompilerTestHarness {
                 diagnostics, Locale.ROOT, null);
         Path output = null;
         try {
-            JavaFileObject sourceFile = new SourceFile(className, source);
-            List<String> options = new ArrayList<String>();
-            if (SourceVersion.latestSupported() == SourceVersion.RELEASE_8) {
-                output = Files.createTempDirectory("immutability-checker-unit-");
-                // javac 8 otherwise generates and clears one top-level tree before
-                // ANALYZE completes for later declarations in the same source.
-                options.addAll(Arrays.asList(
-                        "-XDcompilePolicy=simple", "-d", output.toString()));
-            } else {
-                options.add("-proc:only");
+            List<JavaFileObject> sourceFiles = new ArrayList<JavaFileObject>();
+            for (java.util.Map.Entry<String, String> entry : sources.entrySet()) {
+                sourceFiles.add(new SourceFile(entry.getKey(), entry.getValue()));
             }
+            output = Files.createTempDirectory("immutability-checker-unit-");
+            List<String> options = new ArrayList<String>();
+            options.addAll(Arrays.asList("-d", output.toString()));
             options.addAll(Arrays.asList(
                     "-classpath", System.getProperty("java.class.path")));
             JavaCompiler.CompilationTask task = compiler.getTask(
@@ -50,7 +49,7 @@ final class CompilerTestHarness {
                     diagnostics,
                     options,
                     null,
-                    Collections.singletonList(sourceFile));
+                    sourceFiles);
             task.setProcessors(Collections.singletonList(new ImmutableProcessor()));
             boolean successful = Boolean.TRUE.equals(task.call());
             return new CompilationResult(successful, normalizeErrors(diagnostics));

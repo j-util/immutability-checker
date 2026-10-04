@@ -64,7 +64,7 @@ public final class DirectStateVerifier {
         boolean record = "RECORD".equals(kindName);
         if (rootType.getKind() != ElementKind.CLASS) {
             String reason = record
-                    ? "annotated records are intentionally deferred to V2"
+                    ? "annotated records are not implemented in the 0.2.0 ordinary-class preview"
                     : "annotated " + kindName.toLowerCase()
                             + " types are outside the current ordinary-class proof domain";
             failures.add(ProofFailure.create(

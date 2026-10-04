@@ -186,15 +186,13 @@ class StaticStateVerificationTest {
     }
 
     @Test
-    void rejectsStaticInitializerHelperConservatively() {
-        assertFails("example.Value", HEADER
+    void acceptsStaticInitializerHelperConservatively() {
+        assertPasses("example.Value", HEADER
                 + "@Immutable final class Value {\n"
                 + "  private static int count;\n"
                 + "  static { initialize(); }\n"
                 + "  private static void initialize() { count = 1; }\n"
-                + "}\n",
-                "[IC006]", "Value.<static>.count", "Value.initialize()",
-                "static-initialization-only helper reachability");
+                + "}\n");
     }
 
     @Test

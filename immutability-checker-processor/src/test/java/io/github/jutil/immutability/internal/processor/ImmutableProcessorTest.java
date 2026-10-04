@@ -264,11 +264,11 @@ class ImmutableProcessorTest {
     }
 
     @Test
-    void rejectsAnnotatedRecordAsIntentionallyDeferredToV2() {
+    void rejectsAnnotatedRecordOutsideOrdinaryClassPreview() {
         assumeRecordsSupported();
         assertFails("example.Identifier", HEADER
                 + "@Immutable record Identifier(String value) {}\n",
-                "[IC001]", "example.Identifier", "records are intentionally deferred to V2");
+                "[IC001]", "example.Identifier", "records are not implemented in the 0.2.0 ordinary-class preview");
     }
 
     @Test
@@ -397,19 +397,17 @@ class ImmutableProcessorTest {
     }
 
     @Test
-    void rejectsCastedCurrentInstanceReceiverInConstructor() {
-        assertFails("example.Value", HEADER
+    void acceptsCastedCurrentInstanceReceiverInConstructor() {
+        assertPasses("example.Value", HEADER
                 + "@Immutable final class Value { private int value;\n"
-                + "  Value(int value) { ((Value) this).value = value; } }\n",
-                "[IC006]", "receiver not proven to be the object under construction");
+                + "  Value(int value) { ((Value) this).value = value; } }\n");
     }
 
     @Test
-    void rejectsAliasedCurrentInstanceReceiverInConstructor() {
-        assertFails("example.Value", HEADER
+    void acceptsAliasedCurrentInstanceReceiverInConstructor() {
+        assertPasses("example.Value", HEADER
                 + "@Immutable final class Value { private int value;\n"
-                + "  Value(int value) { Value alias = this; alias.value = value; } }\n",
-                "[IC006]", "receiver not proven to be the object under construction");
+                + "  Value(int value) { Value alias = this; alias.value = value; } }\n");
     }
 
     @Test
@@ -445,11 +443,10 @@ class ImmutableProcessorTest {
     }
 
     @Test
-    void rejectsConstructorOnlyHelperConservatively() {
-        assertFails("example.Value", HEADER
+    void acceptsConstructorOnlyHelperConservatively() {
+        assertPasses("example.Value", HEADER
                 + "@Immutable final class Value { private int value; Value(int value) { initialize(value); }\n"
-                + "  private void initialize(int value) { this.value = value; } }\n",
-                "[IC006]", "Value.value", "constructor-only helper reachability");
+                + "  private void initialize(int value) { this.value = value; } }\n");
     }
 
     @Test

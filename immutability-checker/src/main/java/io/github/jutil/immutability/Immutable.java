@@ -20,7 +20,7 @@ import java.lang.annotation.Target;
  * the compiler's annotation-processor path. The annotation API and processor
  * versions must match.</p>
  *
- * <p>Version 0.1 is a technical preview for ordinary top-level and static
+ * <p>Version 0.2 is an unreleased technical preview under preparation for ordinary top-level and static
  * member classes. Its proof is sound only within the explicitly supported
  * domain described below; it is not the full intended 1.0.0 feature set.</p>
  *
@@ -34,32 +34,43 @@ import java.lang.annotation.Target;
  * superclasses that participate recursively in the proof graph. It does not
  * analyze unrelated global state merely because a method mentions it.</p>
  *
- * <p>The 0.1 technical-preview collection model supports fields declared as
+ * <p>The 0.2 technical-preview collection model supports fields declared as
  * {@link java.util.Collection}, {@link java.util.List}, {@link java.util.Set},
- * or {@link java.util.Map} when the retained container comes directly from a
+ * or {@link java.util.Map} when the retained container comes from a supported
  * fresh {@link java.util.ArrayList}, {@link java.util.HashSet},
  * {@link java.util.LinkedHashSet}, {@link java.util.HashMap}, or
  * {@link java.util.LinkedHashMap} allocation in the applicable initialization
- * phase. Copy constructors establish fresh container ownership but do not copy
- * their items. Collection elements, and map keys and values, are recursively
+ * phase, including supported source helpers. Copy constructors establish fresh
+ * container ownership but do not copy their items. Collection elements, and map keys and values, are recursively
  * verified as part of the retained state graph.</p>
  *
- * <p>Supported structural mutation is allowed only after fresh ownership has
- * been established and before the owning instance or class-state boundary
- * freezes. The collection-specific analysis rejects direct container aliases,
- * simple local-alias mutation after freeze, container returns, passing the
- * container to unmodeled code, mutation-capable non-private fields, and
- * iterator or view exposure. It models only an explicit set of collection read
- * and mutation signatures; unknown operations fail closed.</p>
+ * <p>The resolved JDK {@code List.copyOf(Collection)} method establishes a
+ * structurally unmodifiable snapshot; its elements are still proved recursively.
+ * The result may be shared or returned directly, and need not be freshly
+ * allocated. It preserves element references and does not transfer ownership
+ * or freeze the input. Analyzed source requires Java 10 or newer APIs for this
+ * factory; both checker artifacts remain usable on Java 8.</p>
  *
- * <p>Collections nested directly inside collections, raw or wildcard
- * collection arguments, unresolved collection type variables, custom or other
- * collection implementations, unmodifiable wrappers, callback-based
- * collection mutation, streams, spliterators, iterators, and collection views
- * are not proven in 0.1. Arrays, records, cross-module proof metadata,
- * general interprocedural method and alias analysis, and arbitrary external
- * library analysis also remain unsupported. These cases are rejected rather
- * than assumed safe.</p>
+ * <p>Value origins are preserved through supported parameters, local aliases,
+ * assignments, casts, returns and acyclic source calls. Supported targets are
+ * static, private or final methods, or resolved methods on exact final receivers.
+ * Private initialization helpers may assign or mutate owned state only when
+ * post-freeze entry paths, nestmates and deferred execution cannot expose that
+ * capability. Source helpers may reside in another compilation source file.</p>
+ *
+ * <p>Owned mutable containers permit supported construction-phase mutation and
+ * non-retaining reads after freeze. Returning a supported independent shallow
+ * copy is permitted when its items are safe; returning a mutable retained alias
+ * is rejected. Modeled snapshot mutators that always throw do not establish a
+ * successful mutation, but argument evaluation and other effects still matter.</p>
+ *
+ * <p>Records, arrays, nested containers, additional factory families and
+ * collection implementations, arbitrary wrappers, unresolved raw or generic
+ * flows, recursive call cycles, unresolved virtual dispatch, complex callbacks,
+ * streams, iterators, views, bytecode proof and cross-module metadata remain
+ * unsupported when relevant to verified state. Control-flow and exception joins
+ * are conservative and may reject safe programs. Unknown state-relevant effects
+ * fail closed. Unrelated argument mutation and local computation are permitted.</p>
  *
  * <p>A successful verification does not establish safe publication under the
  * Java Memory Model and does not imply general method purity or thread safety.

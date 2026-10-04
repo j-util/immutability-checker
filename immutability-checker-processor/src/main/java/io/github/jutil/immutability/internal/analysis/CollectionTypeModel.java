@@ -99,6 +99,14 @@ final class CollectionTypeModel {
         return type != null && SUPPORTED_IMPLEMENTATIONS.contains(type.getQualifiedName().toString());
     }
 
+    boolean isListCopyOf(ExecutableElement method) {
+        return method != null && method.getModifiers().contains(javax.lang.model.element.Modifier.STATIC)
+                && method.getEnclosingElement() instanceof TypeElement
+                && ((TypeElement) method.getEnclosingElement()).getQualifiedName().contentEquals("java.util.List")
+                && method.getSimpleName().contentEquals("copyOf")
+                && "java.util.Collection".equals(erasedParameters(method));
+    }
+
     Operation operation(ExecutableElement method) {
         if (method == null || !(method.getEnclosingElement() instanceof TypeElement)) {
             return Operation.UNKNOWN;
@@ -192,6 +200,7 @@ final class CollectionTypeModel {
     }
 
     boolean hasExactRoleContract(TypeMirror candidate, TypeMirror retainedContract) {
+        if (candidate == null || retainedContract == null) { return false; }
         boolean mapRoles = isMapLike(retainedContract);
         List<? extends TypeMirror> candidateRoles = genericRoles(candidate, mapRoles);
         List<? extends TypeMirror> retainedRoles = genericRoles(retainedContract, mapRoles);
@@ -208,16 +217,9 @@ final class CollectionTypeModel {
         return true;
     }
 
-    boolean hasCompleteRoleContract(TypeMirror type) {
-        boolean mapRoles = isMapLike(type);
-        return genericRoles(type, mapRoles).size() == (mapRoles ? 2 : 1);
-    }
-
-    boolean isCompatibleItem(TypeMirror candidate, CollectionProof proof, int roleIndex) {
-        if (candidate == null || candidate.getKind() == TypeKind.ERROR) {
-            return false;
-        }
-        List<? extends TypeMirror> retainedRoles = arguments(proof.getField().asType());
+    boolean isCompatibleItem(TypeMirror candidate, TypeMirror contract, int roleIndex) {
+        if (candidate == null || contract == null) { return false; }
+        List<? extends TypeMirror> retainedRoles = genericRoles(contract, isMapLike(contract));
         if (roleIndex < 0 || roleIndex >= retainedRoles.size()) {
             return false;
         }
@@ -230,11 +232,6 @@ final class CollectionTypeModel {
         }
         TypeMirror retainedRole = retainedRoles.get(roleIndex);
         return types.isAssignable(assignableCandidate, retainedRole);
-    }
-
-    TypeMirror retainedRole(CollectionProof proof, int roleIndex) {
-        List<? extends TypeMirror> roles = arguments(proof.getField().asType());
-        return roleIndex < 0 || roleIndex >= roles.size() ? null : roles.get(roleIndex);
     }
 
     private List<? extends TypeMirror> genericRoles(TypeMirror type, boolean mapRoles) {

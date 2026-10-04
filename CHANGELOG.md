@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 0.2.0 technical preview under preparation
+
+- Added one shared may-origin value model for ordinary-class field retention,
+  local/parameter aliases, casts, assignments, returns and bounded source calls.
+- Added the resolved `java.util.List.copyOf(Collection)` snapshot model with
+  separate recursive element proof, snapshot sharing and direct safe returns.
+- Added acyclic static/private/final helper analysis, exact final receiver target
+  resolution, helpers in another source file, and private initialization helpers
+  checked against post-freeze, nestmate and deferred execution reachability.
+- Extended the existing five owned collection implementations through helper
+  allocations, construction mutation, read-only calls and defensive-copy returns.
+- Corrected a false acceptance: another object's retained container must not be
+  treated as owned by the currently executing constructor.
+- Preserved conservative joins, raw/unchecked rejection, separate instance/static
+  freeze boundaries, recursive state proof and diagnostic IDs IC000–IC006.
+- Preserved attributed source trees on Java 8 so helper proof is independent of
+  compilation order and consumers need no private compiler flags.
+- Added Java 17 to the existing Java 8/26 CI matrix and full compiler/runtime
+  consumer coverage. Published classes still target major version 52.
+- No public Java API or runtime dependency change. Records, arrays, nested
+  containers, other factory families, general recursive/dynamic method proof,
+  callbacks/views and cross-module proof remain outside this preview.
+- This version is unreleased; no publication date or Central availability is claimed.
+
 ## [0.1.0] - 2026-08-25
 
 ### Added

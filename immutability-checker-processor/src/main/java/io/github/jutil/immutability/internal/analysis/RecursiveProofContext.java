@@ -103,37 +103,12 @@ final class RecursiveProofContext {
             }
         }
 
-        int failureCountBeforeCollectionScan = failures.size();
-        if (!collectionProofs.isEmpty()) {
-            new CollectionOriginAnalyzer(
-                    type,
-                    rootName,
-                    trees,
-                    collectionTypeModel,
-                    collectionProofs,
-                    failures).analyze(typePath);
-            new CollectionEffectScanner(
-                    type,
-                    rootName,
-                    trees,
-                    collectionTypeModel,
-                    collectionProofs,
-                    failures).scanEnclosingType(typePath);
-        }
-        if (failures.size() != failureCountBeforeCollectionScan) {
-            proven = false;
-        }
-
-        int failureCountBeforeWriteScan = failures.size();
-        new DirectFieldWriteScanner(
-                type,
-                rootName,
-                incomingPath,
-                trees,
-                failures,
+        int failureCountBeforeFlow = failures.size();
+        new ValueFlowAnalyzer(type, rootName, incomingPath, trees, types, elements,
+                collectionTypeModel, referenceTypeProof, collectionProofs, failures,
                 effectiveDiagnostic(DiagnosticId.POST_FREEZE_WRITE, violationDiagnostic))
-                .scanEnclosingType(typePath);
-        if (failures.size() != failureCountBeforeWriteScan) {
+                .analyze(typePath);
+        if (failures.size() != failureCountBeforeFlow) {
             proven = false;
         }
         node.state = proven ? ProofState.PROVEN : ProofState.FAILED;
@@ -252,23 +227,12 @@ final class RecursiveProofContext {
             return false;
         }
         if (collectionShape != CollectionTypeModel.Shape.NOT_COLLECTION) {
-            if (field.getModifiers().contains(Modifier.FINAL)
-                    && !field.getModifiers().contains(Modifier.PRIVATE)) {
-                failures.add(failure(
-                        DiagnosticId.REACHABLE_REFERENCE_UNPROVEN,
-                        retainedPath,
-                        "non-private final collection field exposes mutation-capable retained state",
-                        tree,
-                        unit));
-                proven = false;
-            }
             CollectionProof collectionProof = new CollectionProof(
                     field,
                     collectionShape,
                     retainedPath,
                     stateField.kind == StateKind.STATIC,
                     tree,
-                    unit,
                     effectiveDiagnostic(DiagnosticId.POST_FREEZE_WRITE, violationDiagnostic));
             collectionProofs.add(collectionProof);
             if (!proveCollectionArguments(
@@ -393,7 +357,7 @@ final class RecursiveProofContext {
         String kindName = referencedType.getKind().name();
         if (referencedType.getKind() != ElementKind.CLASS) {
             String reason = "RECORD".equals(kindName)
-                    ? referenceType + " -> referenced records are intentionally deferred to V2"
+                    ? referenceType + " -> referenced records are not implemented in the 0.2.0 ordinary-class preview"
                     : referenceType + " -> unresolved runtime subtype analysis: declared "
                             + kindName.toLowerCase()
                             + " is not an exact ordinary-class runtime type";

@@ -197,6 +197,42 @@ class PackagedArtifactIT {
         assertTrue(local.diagnostics.contains("[IC002]"), local.diagnostics);
     }
 
+    @Test
+    void packagedHelpersPreserveOwnedAndSnapshotStateAtRuntime() throws Exception {
+        Path api = artifactPath("annotation.api.jar");
+        Path processor = artifactPath("processor.jar");
+        String common = "import io.github.jutil.immutability.Immutable; import java.util.*; ";
+        String owned = common + "@Immutable public final class Owned { private List<String> values;"
+                + "public Owned(List<String> a) { initialize(a); }"
+                + "private void initialize(List<String> a) { values = new ArrayList<>(a); fill(values); }"
+                + "private static void fill(List<String> a) { a.add(\"initial\"); }"
+                + "public List<String> values() { return new ArrayList<>(values); }"
+                + "public static void main(String[] args) { List<String> input = new ArrayList<>(); input.add(\"a\");"
+                + "Owned o = new Owned(input); input.clear(); o.values().clear();"
+                + "if (!o.values().equals(Arrays.asList(\"a\", \"initial\"))) throw new AssertionError(); }}";
+        Compilation ownedResult = compileWithProcessorPath(api, processor, "Owned", owned, false, true);
+        assertTrue(ownedResult.successful, ownedResult.diagnostics);
+        if (Integer.parseInt(javax.lang.model.SourceVersion.latestSupported().name()
+                .substring("RELEASE_".length())) < 10) {
+            return;
+        }
+        String snapshot = common + "@Immutable public final class Snapshot { private List<String> values;"
+                + "public Snapshot(List<String> a) { values = forward(copy(a)); }"
+                + "private static List<String> copy(List<String> a) { return List.copyOf(a); }"
+                + "private static List<String> forward(List<String> a) { return a; }"
+                + "public List<String> values() { return forward(values); }"
+                + "public static void main(String[] args) { List<String> input = new ArrayList<>(Arrays.asList(\"b\", \"a\", \"b\"));"
+                + "Snapshot s = new Snapshot(input); input.clear();"
+                + "if (!new ArrayList<>(s.values()).equals(Arrays.asList(\"b\", \"a\", \"b\"))) throw new AssertionError();"
+                + "if (!new ArrayList<>(new Snapshot(s.values()).values()).equals(s.values())) throw new AssertionError();"
+                + "if (!new Snapshot(new ArrayList<String>()).values().isEmpty()) throw new AssertionError();"
+                + "try { s.values().add(\"x\"); throw new AssertionError(); } catch (UnsupportedOperationException expected) {}"
+                + "try { new Snapshot(Arrays.asList((String)null)); throw new AssertionError(); } catch (NullPointerException expected) {}"
+                + "try { new Snapshot(null); throw new AssertionError(); } catch (NullPointerException expected) {} }}";
+        Compilation snapshotResult = compileWithProcessorPath(api, processor, "Snapshot", snapshot, true, true);
+        assertTrue(snapshotResult.successful, snapshotResult.diagnostics);
+    }
+
     private static Path artifactPath(String property) {
         Path path = Paths.get(System.getProperty(property));
         assertTrue(Files.isRegularFile(path), "Packaged artifact not found: " + path);
@@ -305,6 +341,12 @@ class PackagedArtifactIT {
             Path processorPathJar,
             String className,
             String source) throws IOException, InterruptedException {
+        return compileWithProcessorPath(annotationApiJar, processorPathJar, className, source, false, false);
+    }
+
+    private static Compilation compileWithProcessorPath(
+            Path annotationApiJar, Path processorPathJar, String className,
+            String source, boolean modernApi, boolean run) throws IOException, InterruptedException {
         Path output = Files.createTempDirectory("immutability-checker-artifact-it-");
         try {
             Path sourceFile = output.resolve("src")
@@ -314,22 +356,32 @@ class PackagedArtifactIT {
             Files.createDirectories(classes);
             Files.write(sourceFile, source.getBytes(StandardCharsets.UTF_8));
 
-            Process process = new ProcessBuilder(
-                    javacExecutable().toString(),
-                    "-classpath", annotationApiJar.toString(),
-                    "-processorpath", processorPathJar.toString(),
-                    "-source", "8",
-                    "-target", "8",
-                    "-Xlint:-options",
-                    "-d", classes.toString(),
-                    sourceFile.toString())
-                    .redirectErrorStream(true)
-                    .start();
+            java.util.List<String> command = new java.util.ArrayList<String>();
+            command.add(javacExecutable().toString());
+            command.addAll(java.util.Arrays.asList("-classpath", annotationApiJar.toString(),
+                    "-processorpath", processorPathJar.toString(), "-d", classes.toString()));
+            if (!modernApi) {
+                if (javax.lang.model.SourceVersion.latestSupported() == javax.lang.model.SourceVersion.RELEASE_8) {
+                    command.addAll(java.util.Arrays.asList("-source", "8", "-target", "8"));
+                } else {
+                    command.addAll(java.util.Arrays.asList("--release", "8"));
+                }
+            }
+            command.add(sourceFile.toString());
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
             String diagnostics;
             try (InputStream input = process.getInputStream()) {
                 diagnostics = readProcessOutput(input);
             }
-            return new Compilation(process.waitFor() == 0, diagnostics);
+            boolean successful = process.waitFor() == 0;
+            if (successful && run) {
+                Path java = javacExecutable().resolveSibling(System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java");
+                Process consumer = new ProcessBuilder(java.toString(), "-classpath", classes.toString(), className)
+                        .redirectErrorStream(true).start();
+                try (InputStream input = consumer.getInputStream()) { diagnostics += readProcessOutput(input); }
+                successful = consumer.waitFor() == 0;
+            }
+            return new Compilation(successful, diagnostics);
         } finally {
             deleteRecursively(output);
         }
