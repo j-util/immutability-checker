@@ -392,13 +392,32 @@ final class ValueFlowAnalyzer {
         } else if (tree instanceof LabeledStatementTree) {
             execute(((LabeledStatementTree) tree).getStatement());
         } else if (tree instanceof AssertTree) {
-            eval(((AssertTree) tree).getCondition()); eval(((AssertTree) tree).getDetail());
+            executeAssert((AssertTree) tree);
         } else if (tree instanceof ClassTree) {
             deferredClass((ClassTree) tree);
         } else if (!(tree instanceof BreakTree) && !(tree instanceof ContinueTree)
                 && !(tree instanceof EmptyStatementTree)) {
             scanUnsupported(tree);
         }
+    }
+
+    private void executeAssert(AssertTree tree) {
+        Frame disabled = frame.copy();
+        eval(tree.getCondition());
+        Frame enabledNormal = frame.copy();
+        ExpressionTree condition = tree.getCondition();
+        while (condition instanceof ParenthesizedTree) {
+            condition = ((ParenthesizedTree) condition).getExpression();
+        }
+        boolean alwaysTrue = condition instanceof LiteralTree
+                && Boolean.TRUE.equals(((LiteralTree) condition).getValue());
+        if (!alwaysTrue) {
+            // The detail belongs only to the enabled/false path, which throws.
+            // Keep its alias history for catch/finally, not normal continuation.
+            eval(tree.getDetail());
+            enabledNormal.observed = ValueFacts.join(enabledNormal.observed, frame.observed);
+        }
+        merge(disabled, enabledNormal);
     }
 
     private void executeTry(TryTree tree) {
@@ -566,7 +585,10 @@ final class ValueFlowAnalyzer {
             return external(type(expression), expression);
         }
         if (expression instanceof ArrayAccessTree) {
-            eval(((ArrayAccessTree) expression).getExpression()); eval(((ArrayAccessTree) expression).getIndex());
+            ArrayAccessTree array = (ArrayAccessTree) expression;
+            ValueFacts receiver = eval(array.getExpression());
+            eval(array.getIndex());
+            hazard(receiver, expression, "tracked state flows through unsupported array access; element provenance is unproven");
             return external(type(expression), expression);
         }
         if (expression instanceof InstanceOfTree) {
@@ -589,6 +611,7 @@ final class ValueFlowAnalyzer {
                 ? eval(((MemberSelectTree) select).getExpression()) : frame.receiver;
         List<ValueFacts> arguments = new ArrayList<ValueFacts>();
         for (ExpressionTree argument : invocation.getArguments()) { arguments.add(eval(argument)); }
+        arguments = invocationArguments(method, invocation.getArguments(), arguments, invocation);
         if (method == null && "super".equals(select.toString())
                 && "java.lang.Object".equals(owner.getSuperclass().toString()) && arguments.isEmpty()) {
             return new ValueFacts();
@@ -743,8 +766,13 @@ final class ValueFlowAnalyzer {
         ExecutableElement constructor = target instanceof ExecutableElement ? (ExecutableElement) target : null;
         TypeElement implementation = constructor != null && constructor.getEnclosingElement() instanceof TypeElement
                 ? (TypeElement) constructor.getEnclosingElement() : null;
+        // Qualified creation evaluates and captures its enclosing instance before
+        // any explicit constructor argument (JLS 15.9.4).
+        ValueFacts enclosing = eval(allocation.getEnclosingExpression());
         List<ValueFacts> arguments = new ArrayList<ValueFacts>();
         for (ExpressionTree argument : allocation.getArguments()) { arguments.add(eval(argument)); }
+        arguments = invocationArguments(constructor, allocation.getArguments(), arguments, allocation);
+        escape(enclosing, allocation, "qualified construction captures an enclosing instance with unproven retention effects");
         if (allocation.getClassBody() == null && model.isSupportedImplementation(implementation)) {
             ValueFacts fresh = value(Kind.FRESH, type(allocation), frame.initialization, site(allocation));
             int source = model.copySourceArgumentIndex(constructor);
@@ -843,6 +871,32 @@ final class ValueFlowAnalyzer {
             if (origin.unchecked || origin.type == null || !model.hasExactRoleContract(origin.type, contract)) { return false; }
         }
         return true;
+    }
+
+    private List<ValueFacts> invocationArguments(ExecutableElement method,
+                                                List<? extends ExpressionTree> expressions,
+                                                List<ValueFacts> arguments, Tree at) {
+        if (method == null || !method.isVarArgs()) { return arguments; }
+        int last = method.getParameters().size() - 1;
+        TypeMirror arrayType = method.getParameters().get(last).asType();
+        TypeMirror actualType = expressions.size() == last + 1 ? type(expressions.get(last)) : null;
+        if (actualType != null && types.isAssignable(actualType, arrayType)) {
+            return arguments; // Fixed-arity invocation with an explicit array (or null).
+        }
+        // JLS 15.12.4.2 packs all trailing arguments into an implicit array.
+        // Arrays have no element-provenance model in this preview. Record the
+        // hazard on every origin, including fresh values retained only later.
+        List<ValueFacts> bound = new ArrayList<ValueFacts>();
+        for (int i = 0; i < last; i++) { bound.add(arguments.get(i)); }
+        for (int i = last; i < arguments.size(); i++) {
+            ValueFacts argument = arguments.get(i);
+            String reason = "variable-arity invocation of " + model.signature(method)
+                    + " stores tracked state in an implicit varargs array; array element provenance is unsupported";
+            hazard(argument, at, reason);
+            escape(argument, at, reason);
+        }
+        bound.add(external(arrayType, at));
+        return bound;
     }
 
     private void bind(ExecutableElement method, List<ValueFacts> arguments) {

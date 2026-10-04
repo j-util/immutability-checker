@@ -17,6 +17,15 @@ All notable changes to this project will be documented in this file.
   allocations, construction mutation, read-only calls and defensive-copy returns.
 - Corrected a false acceptance: another object's retained container must not be
   treated as owned by the currently executing constructor.
+- Corrected two soundness regressions introduced in 0.2.0: variable-arity calls
+  now check every argument packed into the implicit array, and qualified inner
+  construction evaluates its enclosing expression before constructor arguments.
+- Corrected an inherited 0.1.0 assertion defect: disabled assertions preserve
+  aliases, and enabled/false detail effects participate in exceptional history
+  without overwriting normal-continuation aliases.
+- Added Java 8-syntax soundness regressions and safe controls for these rules.
+  Arrays and array-element provenance remain outside the supported proof domain;
+  tracked state flowing through implicit varargs arrays fails closed.
 - Preserved conservative joins, raw/unchecked rejection, separate instance/static
   freeze boundaries, recursive state proof and diagnostic IDs IC000–IC006.
 - Preserved attributed source trees on Java 8 so helper proof is independent of

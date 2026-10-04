@@ -96,8 +96,9 @@ fails with `IC006`.
 | Private initialization helpers | Instance and static initialization, constructor delegation, with frozen entry and nestmate/deferred reachability checks |
 | Snapshot sharing and direct returns | Structural snapshot proof plus recursive element proof; allocation identity is not required |
 | Owned mutable containers through helpers | Existing five exact implementations, shallow copy constructors, initialization mutation, frozen reads, independent copy returns |
-| Branches and exception paths | Conservative origin unions for conditionals, early returns, loops, switch statements, short circuit and catch/finally continuations |
+| Branches and exception paths | Conservative origin unions for conditionals, early returns, loops, switch statements, short circuit, enabled/disabled assertions and catch/finally continuations |
 | New value-flow capabilities above | [ValueFlowVerificationTest](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/ValueFlowVerificationTest.java) |
+| Varargs, qualified creation and assertion soundness | [ValueFlowSoundnessRegressionTest](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/ValueFlowSoundnessRegressionTest.java); unrelated varargs remain permitted, qualified enclosing expressions precede arguments, assertion detail effects belong to the enabled/false exceptional path |
 | Runtime isolation, JAR boundaries, discovery, `--release 8` | [PackagedArtifactIT](immutability-checker-processor/src/test/java/io/github/jutil/immutability/integration/PackagedArtifactIT.java) |
 | Java 8 / 17 / 26 | Same Java 8-compatible artifacts; `List.copyOf` source needs Java 10+ APIs |
 | Records, arrays, nested containers | Not implemented; rejected when participating in verified state |
@@ -243,6 +244,9 @@ does not infer read-only behavior from a method name.
 The 0.2.0 preview does not implement:
 
 - records or arrays;
+- array-element provenance, including tracked state packed into implicit varargs
+  arrays; such flows are rejected even through Object-typed varargs or before
+  later field retention, while unrelated varargs computations remain permitted;
 - collections nested directly inside collections;
 - queue, deque, sorted, concurrent, weak, identity, custom, third-party, or
   otherwise unlisted collection implementations;
@@ -281,6 +285,11 @@ corrected false acceptance now rejects mutation of another object's retained
 collection during construction: constructing a new object cannot thaw existing
 state. Recursive method proof remains bounded to acyclic source calls, rather
 than general method analysis. Proof facts are local to each root and call context.
+Two introduced 0.2.0 regressions are corrected: varargs no longer discard tracked
+origins, and qualified construction no longer skips its enclosing expression.
+The inherited 0.1.0 assertion defect is also corrected: analysis preserves the
+disabled path and checks enabled condition/detail effects, including catch/finally
+continuations, without assuming the consumer's assertion configuration.
 
 ## Diagnostics
 
