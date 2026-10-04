@@ -21,7 +21,23 @@ dependency and configure the matching `immutability-checker-processor` version
 on the compiler's annotation-processor path. Annotation presence without the
 processor running is not verification.
 
-Maven:
+### Try the unreleased preview
+
+From a checkout of this repository, build, verify, and install both 0.2.0
+artifacts into your local Maven repository:
+
+```bash
+./mvnw --batch-mode --no-transfer-progress clean install
+```
+
+Then configure your application with one of the examples below. Maven can use
+the locally installed artifacts directly; Gradle needs the `mavenLocal()`
+repository shown below. Running `clean verify` alone checks the build but does
+not install its artifacts for other projects to use.
+
+### Maven
+
+Add these dependencies and compiler settings to your application's `pom.xml`:
 
 ```xml
 <dependencies>
@@ -38,6 +54,7 @@ Maven:
         <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.15.0</version>
             <configuration>
                 <annotationProcessorPaths>
                     <path>
@@ -52,16 +69,23 @@ Maven:
 </build>
 ```
 
-Gradle:
+### Gradle
+
+For an application using Gradle's Java plugin, add this to `build.gradle`:
 
 ```groovy
+repositories {
+    mavenLocal() // Resolve the locally installed 0.2.0 preview.
+    mavenCentral()
+}
+
 dependencies {
     compileOnly 'io.github.j-util:immutability-checker:0.2.0'
     annotationProcessor 'io.github.j-util:immutability-checker-processor:0.2.0'
 }
 ```
 
-Example:
+### A class that passes
 
 ```java
 import io.github.jutil.immutability.Immutable;
@@ -82,27 +106,50 @@ public final class Currency {
 
 `final` is neither required nor sufficient for a field. The example passes
 because the direct write occurs during construction and no later supported
-mutation path exists. Adding a method that writes `code` after construction
-fails with `IC006`.
+mutation path exists.
+
+### A change that fails
+
+Adding this method to `Currency` allows its state to change after construction:
+
+```java
+public void setCode(String code) {
+    this.code = code;
+}
+```
+
+Compilation fails with a diagnostic identifying the field and method:
+
+```text
+[IC006] ... Currency.code -> write in Currency.setCode() occurs outside instance construction ...
+```
+
+You can use this change to check your setup: the original class should compile,
+and adding the setter should fail with `IC006`. If both compile successfully,
+check that the processor is enabled, then run a clean compilation.
 
 ## 0.2.0 capability matrix
 
-| Capability / context | Supported subset and evidence |
+| What you can write | 0.2.0 behavior and limits |
 | --- | --- |
-| Ordinary classes, instance/static fields, recursive source types | [Existing class tests](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/ImmutableProcessorTest.java), [static tests](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/StaticStateVerificationTest.java) |
-| `List.copyOf(Collection)` | Field initializers, constructors, static initializers, locals, arguments and returns; resolved JDK method only |
-| Parameters, assignments, aliases and returned values | Actual value origins flow through each call; Object widening and compatible casts preserve aliases |
-| Source helpers, including another source file | Acyclic static/private/final methods, or the resolved override on an exact final receiver |
-| Private initialization helpers | Instance and static initialization, constructor delegation, with frozen entry and nestmate/deferred reachability checks |
-| Snapshot sharing and direct returns | Structural snapshot proof plus recursive element proof; allocation identity is not required |
-| Owned mutable containers through helpers | Existing five exact implementations, shallow copy constructors, initialization mutation, frozen reads, independent copy returns |
-| Branches and exception paths | Conservative origin unions for conditionals, early returns, loops, switch statements, short circuit, enabled/disabled assertions and catch/finally continuations |
-| New value-flow capabilities above | [ValueFlowVerificationTest](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/ValueFlowVerificationTest.java) |
-| Varargs, qualified creation and assertion soundness | [ValueFlowSoundnessRegressionTest](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/ValueFlowSoundnessRegressionTest.java); unrelated varargs remain permitted, qualified enclosing expressions precede arguments, assertion detail effects belong to the enabled/false exceptional path |
-| Runtime isolation, JAR boundaries, discovery, `--release 8` | [PackagedArtifactIT](immutability-checker-processor/src/test/java/io/github/jutil/immutability/integration/PackagedArtifactIT.java) |
-| Java 8 / 17 / 26 | Same Java 8-compatible artifacts; `List.copyOf` source needs Java 10+ APIs |
-| Records, arrays, nested containers | Not implemented; rejected when participating in verified state |
-| Other factories/wrappers, recursive calls, unresolved virtual targets, callbacks/views, external bytecode | Not proven when state-relevant; see limitations below |
+| Ordinary classes | Checks instance and static fields, source-available superclasses, and referenced final classes whose source is available in the same compilation. |
+| `List.copyOf(Collection)` | Supports field and static initializers, constructors, locals, method arguments, helpers, and returns. Elements must also pass recursive verification. |
+| Local variables, parameters, casts, and returns | Tracks references to the same object through assignments and helper calls, including `Object` references and compatible casts. |
+| Source helper methods | Follows non-recursive calls to static, private, or final methods, and resolved methods on a known final receiver type. Helpers may be in another source file in the same compilation. |
+| Private initialization helpers | Can allocate and populate state during construction or static initialization. Paths that mutate that state later are rejected. |
+| Owned mutable collections | Supports exact `ArrayList`, `HashSet`, `LinkedHashSet`, `HashMap`, and `LinkedHashMap` allocations, including supported copy constructors and helpers. Retained containers must remain private and have no mutable external aliases. |
+| Collection accessors | Can return `List.copyOf` snapshots or independent copies of owned containers when elements, keys, and values pass verification. Returning a retained mutable container is rejected. |
+| Branches, loops, exceptions, and assertions | Checks possible references across control flow, including enabled and disabled assertions. May reject safe code when the required proof is unavailable. |
+| Java 8 / 17 / 26 | Tested on all three JDKs with the same Java 8-compatible artifacts. `List.copyOf` requires Java 10+ APIs. |
+| Records, arrays, and nested containers | Not supported when they participate in verified state. Passing tracked state through implicit varargs arrays is also rejected. |
+| Other factories, wrappers, callbacks, views, recursive calls, and compiled dependencies | Not proven when relevant to verified state; see [fail-closed boundaries](#fail-closed-boundaries). |
+
+Verification coverage: [classes](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/ImmutableProcessorTest.java),
+[static state](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/StaticStateVerificationTest.java),
+[collections](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/CollectionVerificationTest.java),
+[helper and snapshot flows](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/ValueFlowVerificationTest.java),
+[varargs, construction, and assertions](immutability-checker-processor/src/test/java/io/github/jutil/immutability/internal/processor/ValueFlowSoundnessRegressionTest.java),
+and [packaged artifacts and runtime isolation](immutability-checker-processor/src/test/java/io/github/jutil/immutability/integration/PackagedArtifactIT.java).
 
 ### Snapshots through helpers
 
@@ -280,16 +327,7 @@ still checked. Unmodeled operations are not automatically harmless just because
 the receiver is a snapshot. Creating a snapshot neither freezes nor transfers
 ownership of its mutable input.
 
-Compared with 0.1.0, safe helper flows and receiver aliases are accepted. A
-corrected false acceptance now rejects mutation of another object's retained
-collection during construction: constructing a new object cannot thaw existing
-state. Recursive method proof remains bounded to acyclic source calls, rather
-than general method analysis. Proof facts are local to each root and call context.
-Two introduced 0.2.0 regressions are corrected: varargs no longer discard tracked
-origins, and qualified construction no longer skips its enclosing expression.
-The inherited 0.1.0 assertion defect is also corrected: analysis preserves the
-disabled path and checks enabled condition/detail effects, including catch/finally
-continuations, without assuming the consumer's assertion configuration.
+See [CHANGELOG.md](CHANGELOG.md) for version history and analysis corrections.
 
 ## Diagnostics
 
