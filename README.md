@@ -1,5 +1,7 @@
 # Immutability Checker
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.j-util/immutability-checker.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.j-util/immutability-checker)
+[![Javadoc](https://javadoc.io/badge2/io.github.j-util/immutability-checker/javadoc.svg)](https://javadoc.io/doc/io.github.j-util/immutability-checker)
 [![CI](https://github.com/j-util/immutability-checker/actions/workflows/ci.yml/badge.svg)](https://github.com/j-util/immutability-checker/actions/workflows/ci.yml)
 
 **0.2.0 is an unreleased technical preview under preparation.** The examples
